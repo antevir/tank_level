@@ -15,23 +15,22 @@
 #include "server.h"
 #include "pump.h"
 
-static const char *ssid = "myssid";       // change this to your SSID
-static const char *password = "password"; // change this to your Wifi password
+#include "settings.h" // Create from settings.template
 
 static WiFiUDP ntpUDP;
 
 // By default 'pool.ntp.org' is used with 60 seconds update interval and
 // no offset
-NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 3600 * 2 /* Sweden +1, summertime +1 */, 60000);
+NTPClient timeClient(ntpUDP, NTP_SERVER, NTP_CLOCK_OFFSET, 60000);
 
 static void connectWifi()
 {
   WiFi.disconnect();
-  Log.info("Connecting WiFi to \"%s\"", ssid);
+  Log.info("Connecting WiFi to \"%s\"", WIFI_SSID);
 
   WiFi.mode(WIFI_STA);
   //WiFi.softAPdisconnect();
-  WiFi.begin(ssid, password);
+  WiFi.begin(WIFI_SSID, WIFI_PASSKEY);
 
   // Wait for connection
   for (int i = 0; i < 25; i++)
@@ -59,7 +58,9 @@ static void connectWifi()
 static void setup_ota()
 {
   ArduinoOTA.setHostname("tank");
-  //ArduinoOTA.setPassword("starta");
+#ifdef OTA_PASSWORD
+  ArduinoOTA.setPassword(OTA_PASSWORD);
+#endif
 
   ArduinoOTA.onStart([]() {
     Log.info("OTA Start");

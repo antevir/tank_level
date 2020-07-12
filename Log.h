@@ -2,14 +2,9 @@
 
 #include <Arduino.h>
 #include <WiFiUdp.h>
+#include "settings.h"
 
-//#define USE_SYSLOG
-#define USE_SERIAL
-
-#define SYSLOG_SERVER "192.168.0.13"
 #define SYSLOG_PORT 514
-
-#define SERIAL_BAUDRATE 115200
 
 #define SYSLOG_HOST "tank.local"
 #define SYSLOG_APP "tank"
@@ -29,8 +24,8 @@ public:
 
     void begin()
     {
-#ifdef USE_SERIAL
-        Serial.begin(SERIAL_BAUDRATE);
+#ifdef LOG_USE_SERIAL
+        Serial.begin(LOG_SERIAL_BAUDRATE);
         Serial.println("");
 #endif
     }
@@ -72,10 +67,10 @@ public:
         char buffer[256];
         vsnprintf(buffer, sizeof(buffer), fmt, args);
 
-#ifdef USE_SYSLOG
+#ifdef LOG_USE_SYSLOG
         writeSysLog(pri, buffer);
 #endif
-#ifdef USE_SERIAL
+#ifdef LOG_USE_SERIAL
         writeSerial(pri, buffer);
 #endif
     }
@@ -84,7 +79,7 @@ public:
     {
         char buffer[64];
         snprintf((char *)buffer, sizeof(buffer), "<%d> %s %s: ", pri, SYSLOG_HOST, SYSLOG_APP);
-        udp.beginPacket(SYSLOG_SERVER, SYSLOG_PORT);
+        udp.beginPacket(LOG_SYSLOG_SERVER, SYSLOG_PORT);
         udp.write(buffer, strlen(buffer));
         udp.write(message, strlen(message));
         udp.endPacket();
