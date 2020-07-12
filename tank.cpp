@@ -179,7 +179,6 @@ void tank_init()
 
     // Take one sample to avoid div by zero in mean filter
     take_sample();
-    update_last_30days();
 }
 
 uint16 tank_get_level()
@@ -261,6 +260,14 @@ void tank_handle()
         // The NTP client has failed
         // Since we don't know the real time we do no more...
         return;
+    }
+
+    // Now when we got the NTP time we need to update 30 day history context once
+    static bool last_30days_updated = false;
+    if (!last_30days_updated)
+    {
+        update_last_30days();
+        last_30days_updated = true;
     }
 
     if (last_hour != HOUR() && !filling)
