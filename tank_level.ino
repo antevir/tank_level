@@ -23,39 +23,28 @@ static WiFiUDP ntpUDP;
 // no offset
 NTPClient timeClient(ntpUDP, NTP_SERVER, NTP_CLOCK_OFFSET, 60000);
 
-static void connectWifi()
+static void setupWifi()
 {
   WiFi.disconnect();
-  Log.info("Connecting WiFi to \"%s\"", WIFI_SSID);
+  Serial.printf("Connecting WiFi to \"%s\"", WIFI_SSID);
 
   WiFi.mode(WIFI_STA);
   //WiFi.softAPdisconnect();
-  WiFi.begin(WIFI_SSID, WIFI_PASSKEY);
 
-  // Wait for connection
-  for (int i = 0; i < 25; i++)
-  {
-    if (WiFi.status() != WL_CONNECTED)
-    {
-      delay(250);
-      Serial.print(".");
-      delay(250);
-    }
-  }
-  Serial.println("");
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    Log.info("WiFi connected");
-    Serial.printf("RSSI: %d dBm\n", WiFi.RSSI());
-    timeClient.update();
-  }
-  else
-  {
-    Log.error("WiFi connect FAILED");
-  }
+  WiFi.onStationModeConnected([](const WiFiEventStationModeConnected &event) {
+    Serial.printf("WiFi connected, RSSI: %d dBm", WiFi.RSSI());
+  });
+
+  WiFi.onStationModeGotIP([](const WiFiEventStationModeGotIP &event) {
+    Serial.printf("WiFi got IP, RSSI: %d dBm", WiFi.RSSI());
+  });
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSKEY);
+  WiFi.setAutoConnect(true);
+  WiFi.setAutoReconnect(true);
 }
 
-static void setup_ota()
+static void setupOta()
 {
   ArduinoOTA.setHostname("tank");
 #ifdef OTA_PASSWORD
@@ -103,6 +92,24 @@ static void setup_ota()
   ArduinoOTA.begin();
 }
 
+static void handleNtp()
+{
+  static long last_time = 0;
+
+  if (millis() - last_time < 10000)
+  {
+    return;
+  }
+  last_time = millis();
+
+  if (year() < 2000)
+  {
+    timeClient.update();
+    Log.info("Current time: %s", timeClient.getFormattedTime().c_str());
+    setTime(timeClient.getEpochTime());
+  }
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -119,7 +126,7 @@ void setup()
   Log.begin();
 
   // Connect to WiFi network
-  connectWifi();
+  setupWifi();
 
   Log.info("Initializing SD card...");
   if (SD.begin(SDCARD_CS_PIN))
@@ -130,10 +137,6 @@ void setup()
   {
     Log.error("initialization failed!");
   }
-
-  timeClient.update();
-  Log.info("Current time: %s", timeClient.getFormattedTime().c_str());
-  setTime(timeClient.getEpochTime());
 
   // Print the IP address
   Log.info("URL: http://%s", WiFi.localIP().toString().c_str());
@@ -146,7 +149,7 @@ void setup()
 
   Log.info("Free stack: %d", ESP.getFreeContStack());
 
-  setup_ota();
+  setupOta();
 
   tank_init();
   pump_init();
@@ -157,10 +160,7 @@ void loop()
 {
   MDNS.update();
   ArduinoOTA.handle();
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    connectWifi();
-  }
+  handleNtp();
   tank_handle();
   server_handle();
   pump_handle();
