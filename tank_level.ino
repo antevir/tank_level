@@ -19,8 +19,6 @@
 
 static WiFiUDP ntpUDP;
 
-// By default 'pool.ntp.org' is used with 60 seconds update interval and
-// no offset
 NTPClient timeClient(ntpUDP, NTP_SERVER, NTP_CLOCK_OFFSET, 60000);
 
 static void setupWifi()
@@ -138,11 +136,8 @@ void setup()
     Log.error("initialization failed!");
   }
 
-  // Print the IP address
-  Log.info("URL: http://%s", WiFi.localIP().toString().c_str());
-
   if (!MDNS.begin("tank"))
-  { // Start the mDNS responder for esp8266.local
+  {
     Log.error("Error setting up MDNS responder!");
   }
   MDNS.addService("http", "tcp", 80);

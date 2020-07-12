@@ -79,7 +79,7 @@ static bool sendLast30daysJson(String path)
             String header =
                 String("HTTP/1.1 200 OK\r\n") +
                 "Content-Type: text/json\r\n" +
-                "Connection: close\r\n" + // the connection will be closed after completion of the response
+                "Connection: close\r\n" +
                 "\r\n";
             WiFiClient client = server.client();
             client.print(header + "[");
@@ -149,7 +149,7 @@ void server_init()
     server.on("/all", HTTP_GET, []() {
         String json = "{";
         json += "\"heap\":" + String(ESP.getFreeHeap());
-        json += ", \"analog\":" + String(analogRead(A0)); //String(tank_get_level());
+        json += ", \"analog\":" + String(analogRead(A0));
         json += ", \"gpio\":" + String((uint32_t)(((GPI | GPO) & 0xFFFF) | ((GP16I & 0x01) << 16)));
         json += "}";
         server.send(200, "text/json", json);

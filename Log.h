@@ -51,8 +51,7 @@ public:
         va_end(args);
     }
 
-    //protected:
-public:
+protected:
     enum Prio
     {
         PriInfo = PRI_INFO,
