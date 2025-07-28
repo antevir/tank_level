@@ -5,12 +5,15 @@
 #include "Log.h"
 #include "pins.h"
 #include "pump.h"
+#include "udp_server.h"
 
 #define PUMP_ENABLE_TIME_S (60 * 15)
 
 #define PUMP_ON_CURRENT_THRESHOLD_MA 800
 #define PUMP_DRYRUN_THRESHOLD_MA 2000
 #define PUMP_DRYRUN_MIN_TIME_S 30
+
+#define PUMP_STATE_NAME   "PUMP_STATE"
 
 #define MIN(x, y) (((x) < (y)) ? (x) : (y))
 #define FILTER_LEN 5
@@ -108,6 +111,9 @@ static PumpState enter_state(PumpState state)
         enable_pump(false);
         break;
     }
+
+    udp_server_send(PUMP_STATE_NAME, state);
+
     return state;
 }
 
