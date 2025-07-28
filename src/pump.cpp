@@ -41,8 +41,9 @@ static PumpState pump_state = PumpIdle;
 static int enable_timer;
 static bool pump_enabled;
 
-static int warning_pattern[] = {0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1, -1};
+static int warning_pattern[] = {0, 0, 0, 0, 0, 0, 1, 1, 1, -1};
 static int *warning_ptr;
+static int warning_count = 0;
 
 static String get_state_string(PumpState state)
 {
@@ -104,6 +105,7 @@ static PumpState enter_state(PumpState state)
         break;
     case PumpWarning:
         warning_ptr = &warning_pattern[0];
+        warning_count = 0;
         enable_pump(*warning_ptr);
         break;
     case PumpDryRun:
@@ -122,7 +124,14 @@ static PumpState execute_warning(bool pump_active)
     warning_ptr++;
     if (*warning_ptr < 0)
     {
-        return enter_state(PumpOff);
+        if (++warning_count == 3)
+        {
+            return enter_state(PumpOff);
+        }
+        else
+        {
+            warning_ptr = &warning_pattern[0];
+        }
     }
     bool pump_toggled = enable_pump(*warning_ptr);
     if (!pump_toggled && pump_enabled && !pump_active)
