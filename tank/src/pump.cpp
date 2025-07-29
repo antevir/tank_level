@@ -5,6 +5,7 @@
 #include "Log.h"
 #include "pins.h"
 #include "pump.h"
+#include "pump_state.h"
 #include "udp_server.h"
 
 #define PUMP_ENABLE_TIME_S (60 * 15)
@@ -24,15 +25,6 @@
 // => mA = (1023 - ADC value) * 10A * 1000 / 409
 // Please note that ADC value is inverted, i.e. 1023 = 0 mA
 #define ADC_TO_mA(x) ((1024 - (x)) * (10000.0f / 409.0f))
-
-enum PumpState
-{
-    PumpDryRun = -2,
-    PumpOff = -1,
-    PumpIdle = 0,
-    PumpRunning,
-    PumpWarning
-};
 
 static int last_second = 0;
 static unsigned long last_sample_time;

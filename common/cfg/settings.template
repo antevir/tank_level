@@ -1,3 +1,4 @@
+// Copy this to settings.h and edit according to preference
 #pragma once
 
 #define WIFI_SSID "my_ssid"

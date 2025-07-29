@@ -2,12 +2,13 @@
 
 #include <Arduino.h>
 #include <WiFiUdp.h>
+#include "app.h"
 #include "settings.h"
 
 #define SYSLOG_PORT 514
 
-#define SYSLOG_HOST "tank.local"
-#define SYSLOG_APP "tank"
+#define SYSLOG_HOST APP_NAME ".local"
+#define SYSLOG_APP APP_NAME
 #define MAX_PACKET_SIZE 500
 
 #define PRI_DEBUG 15   // 8 + 7
