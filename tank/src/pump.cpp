@@ -224,6 +224,15 @@ static void check_button()
     }
 }
 
+static void check_got_water()
+{
+    bool got_water = digitalRead(GOT_WATER_PIN) == LOW;
+    if (!got_water && (pump_state > PumpDryRun))
+    {
+        pump_state = enter_state(PumpDryRun);
+    }
+}
+
 void pump_init()
 {
     last_second = second();
@@ -276,6 +285,7 @@ void pump_handle()
     {
         last_second = second();
         check_for_dryrun();
+        check_got_water();
         if (filter_filled)
         {
             pump_state = execute_state(pump_state);

@@ -17,3 +17,4 @@
 #define PUMP_RELAY_PIN D1
 #define BUTTON_PIN D0
 #define SDCARD_CS_PIN D8
+#define GOT_WATER_PIN D4

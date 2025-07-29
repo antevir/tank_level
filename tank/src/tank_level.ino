@@ -116,6 +116,7 @@ void setup()
   pinMode(DIST_TRIG_PIN, OUTPUT);
   pinMode(PUMP_RELAY_PIN, OUTPUT);
   pinMode(SDCARD_CS_PIN, OUTPUT);
+  pinMode(GOT_WATER_PIN, INPUT_PULLUP);
 
   digitalWrite(DIST_TRIG_PIN, LOW);
   digitalWrite(PUMP_RELAY_PIN, HIGH);
