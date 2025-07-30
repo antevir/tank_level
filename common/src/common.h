@@ -5,6 +5,8 @@
 #include "Log.h"
 #include "settings.h" // Create from settings.template
 
+#define TCP_SERVER_PORT 15011
+
 inline void setupWifi()
 {
   WiFi.disconnect();

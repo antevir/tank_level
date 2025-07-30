@@ -6,7 +6,7 @@
 #include "pins.h"
 #include "pump.h"
 #include "pump_state.h"
-#include "udp_server.h"
+#include "tcp_server.h"
 
 #define PUMP_ENABLE_TIME_S (60 * 15)
 
@@ -26,6 +26,7 @@
 // Please note that ADC value is inverted, i.e. 1023 = 0 mA
 #define ADC_TO_mA(x) ((1024 - (x)) * (10000.0f / 409.0f))
 
+const char *pump_topic = "pump_state";
 static int last_second = 0;
 static unsigned long last_sample_time;
 static MedianFilter<int> medianFilter(FILTER_LEN);
@@ -106,7 +107,7 @@ static PumpState enter_state(PumpState state)
         break;
     }
 
-    udp_server_send(PUMP_STATE_NAME, state);
+    tcp_server_notify_state(state);
 
     return state;
 }
@@ -225,12 +226,27 @@ static void check_got_water()
     }
 }
 
+static void tcp_command_callback(const String &cmd)
+{
+    if (cmd.equalsIgnoreCase("PUMP_ENABLE"))
+    {
+        pump_enable();
+    }
+    else if (cmd.equalsIgnoreCase("PUMP_DISABLE"))
+    {
+        pump_disable();
+    }
+}
+
 void pump_init()
 {
     last_second = second();
     last_sample_time = millis();
     take_sample();
     pump_state = enter_state(PumpOff);
+
+    tcp_server_begin();
+    tcp_server_set_command_handler(tcp_command_callback);
 }
 
 void pump_enable()
@@ -283,4 +299,6 @@ void pump_handle()
             pump_state = execute_state(pump_state);
         }
     }
+
+    tcp_server_loop();
 }
