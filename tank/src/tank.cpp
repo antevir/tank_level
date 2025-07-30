@@ -148,7 +148,7 @@ static bool take_sample()
         digitalWrite(DIST_TRIG_PIN, HIGH);
         delayMicroseconds(10);
         digitalWrite(DIST_TRIG_PIN, LOW);
-        long duration = pulseIn(DIST_ECHO_PIN, HIGH);
+        long duration = pulseIn(DIST_ECHO_PIN, HIGH, 10000 /* 10 ms timeout */);
         fastMedianFilter.AddValue(duration);
         if (duration == 0)
         {

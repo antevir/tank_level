@@ -24,6 +24,7 @@ inline void setupWifi()
   });
 
   WiFi.begin(WIFI_SSID, WIFI_PASSKEY);
+  WiFi.setSleep(false);
   WiFi.setAutoConnect(true);
   WiFi.setAutoReconnect(true);
 }
