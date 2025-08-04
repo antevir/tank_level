@@ -310,6 +310,7 @@ void loop()
             switch (pump_state)
             {
                 case PumpRunning:
+                case PumpIdle:
                     send_pump_request(false);
                     break;
                 default:
