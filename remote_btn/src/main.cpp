@@ -244,6 +244,10 @@ static void check_tank_ip(void)
 
     if (WiFi.status() != WL_CONNECTED)
     {
+        if (!was_disconnected)
+        {
+            set_led(LedOrange, LedBlinkSlow);
+        }
         was_disconnected = true;
         return;
     }
@@ -274,6 +278,7 @@ void setup()
     pinMode(BUTTON_PIN, INPUT_PULLUP);
     pinMode(LED_GREEN_PIN, OUTPUT);
     pinMode(LED_RED_PIN, OUTPUT);
+    set_led(LedOrange, LedBlinkSlow);
 
     Log.begin();
 
