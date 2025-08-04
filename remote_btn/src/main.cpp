@@ -181,6 +181,15 @@ void tcp_client_loop()
     static unsigned long last_tcp_heartbeat = 0;
     static unsigned long last_tcp_reconnect_attempt = 0;
 
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        if (client.connected())
+        {
+            client.stop();
+        }
+        return;
+    }
+
     if (!client.connected())
     {
         if (millis() - last_tcp_reconnect_attempt >= RECONNECT_INTERVAL_MS)
@@ -230,14 +239,16 @@ static bool send_pump_request(bool enable)
 
 static void check_tank_ip(void)
 {
-    static uint32_t last_lookup_time_ms = MDNS_REFRESH_INTERVAL_MS; // Make sure it triggers first time called
+    static bool was_disconnected = true;
+    static uint32_t last_lookup_time_ms = 0;
 
     if (WiFi.status() != WL_CONNECTED)
     {
+        was_disconnected = true;
         return;
     }
 
-    if (millis() - last_lookup_time_ms > MDNS_REFRESH_INTERVAL_MS)
+    if (was_disconnected || (millis() - last_lookup_time_ms > MDNS_REFRESH_INTERVAL_MS))
     {
         Log.info("Resolving tank.local...");
 
@@ -253,6 +264,8 @@ static void check_tank_ip(void)
 
         last_lookup_time_ms = millis();
     }
+
+    was_disconnected = false;
 }
 
 void setup()
