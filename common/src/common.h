@@ -1,5 +1,13 @@
-#include <ESP8266WiFi.h>
-#include <ESP8266mDNS.h>
+#if defined(ESP8266)
+# include <ESP8266WiFi.h>
+# include <ESP8266mDNS.h>
+#elif defined(ESP32)
+# include <WiFi.h>
+# include <ESPmDNS.h>
+#else
+# error "Unsupported architecture"
+#endif
+
 #include <ArduinoOTA.h>
 
 #include "Log.h"
@@ -13,15 +21,6 @@ inline void setupWifi()
   Serial.printf("Connecting WiFi to \"%s\"", WIFI_SSID);
 
   WiFi.mode(WIFI_STA);
-  //WiFi.softAPdisconnect();
-
-  WiFi.onStationModeConnected([](const WiFiEventStationModeConnected &event) {
-    Serial.printf("WiFi connected, RSSI: %d dBm", WiFi.RSSI());
-  });
-
-  WiFi.onStationModeGotIP([](const WiFiEventStationModeGotIP &event) {
-    Serial.printf("WiFi got IP, RSSI: %d dBm", WiFi.RSSI());
-  });
 
   WiFi.begin(WIFI_SSID, WIFI_PASSKEY);
   WiFi.setSleep(false);

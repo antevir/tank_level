@@ -80,8 +80,8 @@ protected:
         char buffer[64];
         snprintf((char *)buffer, sizeof(buffer), "<%d> %s %s: ", pri, SYSLOG_HOST, SYSLOG_APP);
         udp.beginPacket(LOG_SYSLOG_SERVER, SYSLOG_PORT);
-        udp.write(buffer, strlen(buffer));
-        udp.write(message, strlen(message));
+        udp.write((uint8_t *)buffer, strlen(buffer));
+        udp.write((uint8_t *)message, strlen(message));
         udp.endPacket();
     }
 
