@@ -3,9 +3,18 @@
 #include "Led.h"
 #include "TankClient.h"
 
-#define BUTTON_PIN      4
-#define LED_GREEN_PIN   12
-#define LED_RED_PIN     15
+#ifdef FEATURE_NIGHTLIGHT
+#include "nightlight_server.h"
+#endif
+
+#define BUTTON_PIN      4  // D2
+#ifdef FEATURE_NIGHTLIGHT
+# define LED_GREEN_PIN   2  // D4 (onboard blue LED shares this pin)
+# define LED_RED_PIN     0  // D3
+#else
+# define LED_GREEN_PIN   12 // D6
+# define LED_RED_PIN     15 // D8
+#endif
 
 #define TICK_MS     100
 
@@ -16,6 +25,11 @@ static Led led;
 static TankClient tank_client;
 
 static PumpState pump_state = PumpOff;
+
+#ifdef FEATURE_NIGHTLIGHT
+static Nightlight nightlight;
+static NightlightServer nl_server;
+#endif
 
 static bool check_button()
 {
@@ -98,6 +112,12 @@ void setup()
     Log.info("Free stack: %d", ESP.getFreeContStack());
 
     setupOta();
+
+#ifdef FEATURE_NIGHTLIGHT
+    nightlight.begin();
+    nl_server.begin(&nightlight);
+    Log.info("Nightlight feature enabled");
+#endif
 }
 
 void loop()
@@ -109,10 +129,14 @@ void loop()
     ArduinoOTA.handle();
     tank_client.handle();
 
+#ifdef FEATURE_NIGHTLIGHT
+    nl_server.handle();
+#endif
+
     uint32_t diff_ms = millis() - last_millis;
     if (diff_ms > TICK_MS) {
         // This is very rough, but we don't need high precision
-        ticks = diff_ms / TICK_MS;
+        ticks += diff_ms / TICK_MS;
         last_millis = millis();
 
         if (check_button())
@@ -130,5 +154,10 @@ void loop()
             }
         }
         led.update(ticks);
+
+#ifdef FEATURE_NIGHTLIGHT
+        nightlight.sampleADC();
+        nightlight.update();
+#endif
     }
 }
