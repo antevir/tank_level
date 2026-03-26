@@ -14,7 +14,7 @@
 #define DIST_ECHO_PIN D2
 
 #define CURRENT_ADC_PIN A0
-#define PUMP_RELAY_PIN D1
-#define BUTTON_PIN D0
+#define PUMP_RELAY_PIN D0
+#define BUTTON_PIN D4
 #define SDCARD_CS_PIN D8
-#define GOT_WATER_PIN D4
+#define GOT_WATER_PIN D1

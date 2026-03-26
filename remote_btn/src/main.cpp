@@ -3,15 +3,16 @@
 #include "Led.h"
 #include "TankClient.h"
 
-#ifdef FEATURE_NIGHTLIGHT
-#include "nightlight_server.h"
+#ifdef FEATURE_GREENHOUSE
+# include "greenhouse_server.h"
 #endif
 
-#define BUTTON_PIN      4  // D2
-#ifdef FEATURE_NIGHTLIGHT
-# define LED_GREEN_PIN   2  // D4 (onboard blue LED shares this pin)
-# define LED_RED_PIN     0  // D3
+#ifdef FEATURE_GREENHOUSE
+# define LED_GREEN_PIN   16
+# define LED_RED_PIN     18
+# define BUTTON_PIN      33
 #else
+# define BUTTON_PIN      4  // D2
 # define LED_GREEN_PIN   12 // D6
 # define LED_RED_PIN     15 // D8
 #endif
@@ -24,11 +25,14 @@ static uint32_t ticks;
 static Led led;
 static TankClient tank_client;
 
-static PumpState pump_state = PumpOff;
+// Exposed to GreenhouseServer via extern for UI indicators
+volatile PumpState g_pump_state    = PumpOff;
+volatile bool     g_button_pressed = false;
+volatile bool     g_tank_connected = false;
 
-#ifdef FEATURE_NIGHTLIGHT
-static Nightlight nightlight;
-static NightlightServer nl_server;
+#ifdef FEATURE_GREENHOUSE
+static GreenhouseCtrl greenhouse;
+static GreenhouseServer gh_server;
 #endif
 
 static bool check_button()
@@ -70,7 +74,7 @@ static void disconnect_cb(void)
 
 static void pump_state_cb(PumpState state)
 {
-    pump_state = state;
+    g_pump_state = state;
     switch (state)
     {
         case PumpOff:
@@ -105,18 +109,31 @@ void setup()
     // Connect to WiFi network
     setupWifi();
 
+#ifdef ESP8266
+    // Disable modem sleep so the radio stays on permanently.
+    // By default ESP8266 powers the radio down between DTIM beacon intervals
+    // (typically ~1 s on most APs).  On each wakeup the SDK disables timer1
+    // interrupts briefly to resync with the AP — timer1 is also the engine
+    // behind analogWrite() software PWM, so every wakeup causes a visible
+    // PWM glitch.  WIFI_NONE_SLEEP keeps the radio always-on and eliminates
+    // these periodic disruptions at the cost of ~20 mA extra idle current.
+    WiFi.setSleepMode(WIFI_NONE_SLEEP);
+#endif
+
     if (!MDNS.begin(APP_NAME))
     {
         Log.error("Error setting up MDNS responder!");
     }
+#ifdef ESP8266
     Log.info("Free stack: %d", ESP.getFreeContStack());
+#endif
 
     setupOta();
 
-#ifdef FEATURE_NIGHTLIGHT
-    nightlight.begin();
-    nl_server.begin(&nightlight);
-    Log.info("Nightlight feature enabled");
+#ifdef FEATURE_GREENHOUSE
+    greenhouse.begin();
+    gh_server.begin(&greenhouse);
+    Log.info("Greenhouse feature enabled");
 #endif
 }
 
@@ -125,12 +142,15 @@ void loop()
     static IPAddress last_ip;
     static uint32_t last_millis = 0;
 
-    MDNS.update();
+#ifdef ESP8266
+    MDNS.update();  // ESP32 MDNS runs automatically; no update() needed
+#endif
     ArduinoOTA.handle();
     tank_client.handle();
+    g_tank_connected = tank_client.isConnected();
 
-#ifdef FEATURE_NIGHTLIGHT
-    nl_server.handle();
+#ifdef FEATURE_GREENHOUSE
+    gh_server.handle();
 #endif
 
     uint32_t diff_ms = millis() - last_millis;
@@ -139,10 +159,12 @@ void loop()
         ticks += diff_ms / TICK_MS;
         last_millis = millis();
 
+        g_button_pressed = (digitalRead(BUTTON_PIN) == LOW);
+
         if (check_button())
         {
             Log.info("Button pressed");
-            switch (pump_state)
+            switch (g_pump_state)
             {
                 case PumpRunning:
                 case PumpIdle:
@@ -155,9 +177,8 @@ void loop()
         }
         led.update(ticks);
 
-#ifdef FEATURE_NIGHTLIGHT
-        nightlight.sampleADC();
-        nightlight.update();
+#ifdef FEATURE_GREENHOUSE
+        greenhouse.update();
 #endif
     }
 }

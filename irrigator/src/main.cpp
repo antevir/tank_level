@@ -3,9 +3,9 @@
 #include "Led.h"
 #include "TankClient.h"
 
-#define BUTTON_PIN      4
+#define BUTTON_PIN      9
 #define LED_GREEN_PIN   8
-#define LED_RED_PIN     9
+#define LED_RED_PIN     7
 
 #define TICK_MS     100
 
@@ -49,6 +49,37 @@ static void pump_state_cb(PumpState state)
     }
 }
 
+static bool check_button()
+{
+    static bool last_button_state = false;
+    static int button_state_counter = 0;
+
+    bool ret = false;
+    bool button_state = digitalRead(BUTTON_PIN) == LOW;
+    if (button_state)
+    {
+        // Button is pushed
+        if (!last_button_state)
+        {
+            ret = true;
+        }
+
+        last_button_state = button_state;
+        button_state_counter = 2;
+    }
+    else
+    {
+        if (last_button_state)
+        {
+            if (--button_state_counter <= 0)
+            {
+                last_button_state = false;
+            }
+        }
+    }
+
+    return ret;
+}
 
 void setup()
 {
@@ -77,7 +108,7 @@ void setup()
 
 void loop()
 {
-    /*int soilMoistureValue = analogRead(A0);  //put Sensor insert into soil
+    int soilMoistureValue = analogRead(A0);  //put Sensor insert into soil
     Serial.println(soilMoistureValue);
     soilmoisturepercent = map(soilMoistureValue, AirValue, WaterValue, 0, 100);
     if (soilmoisturepercent >= 100)
@@ -92,7 +123,7 @@ void loop()
     {
         Serial.print(soilmoisturepercent);
         Serial.println("%");
-    }*/
+    }
 
     static uint32_t last_millis = 0;
 
@@ -102,9 +133,23 @@ void loop()
     uint32_t diff_ms = millis() - last_millis;
     if (diff_ms > TICK_MS) {
         // This is very rough, but we don't need high precision
-        ticks = diff_ms / TICK_MS;
+        ticks += diff_ms / TICK_MS;
         last_millis = millis();
+
+        if (check_button())
+        {
+            Log.info("Button pressed");
+            switch (pump_state)
+            {
+                case PumpRunning:
+                case PumpIdle:
+                    tank_client.send_pump_request(false);
+                    break;
+                default:
+                    tank_client.send_pump_request(true);
+                    break;
+            }
+        }
         led.update(ticks);
     }
-
 }
