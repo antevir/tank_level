@@ -40,9 +40,11 @@ static bool sendHistoryJson(String path)
                 "\r\n";
             WiFiClient client = server.client();
             client.print(header + "[");
+            uint8_t buf[256];
             while (file.available())
             {
-                client.write(file.read());
+                size_t len = file.read(buf, sizeof(buf));
+                client.write(buf, len);
             }
             file.close();
             client.print("]");
@@ -83,9 +85,11 @@ static bool sendLast30daysJson(String path)
                 "\r\n";
             WiFiClient client = server.client();
             client.print(header + "[");
+            uint8_t buf[256];
             while (file.available())
             {
-                client.write(file.read());
+                size_t len = file.read(buf, sizeof(buf));
+                client.write(buf, len);
             }
             client.print("]");
             client.flush();

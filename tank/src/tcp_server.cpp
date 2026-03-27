@@ -24,16 +24,22 @@ void tcp_server_loop()
     // Accept new clients
     WiFiClient newClient = server.accept();
     if (newClient) {
+        bool assigned = false;
         for (int i = 0; i < MAX_CLIENTS; ++i) {
             if (!clients[i] || !clients[i].connected()) {
                 clients[i].stop();
                 clients[i] = newClient;
                 clients[i].setNoDelay(true);
+                clients[i].setTimeout(100);
                 last_activity[i] = now;
                 String msg = "PUMP_STATE:" + String((int)current_state) + "\n";
                 clients[i].print(msg);  // Send initial state
+                assigned = true;
                 break;
             }
+        }
+        if (!assigned) {
+            newClient.stop();
         }
     }
 

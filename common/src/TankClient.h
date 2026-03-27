@@ -143,6 +143,7 @@ public:
             {
                 this->last_tcp_heartbeat = millis();
                 client.println("PING");
+                this->awaiting_pong = true;
                 Log.info("[CLIENT] PING sent");
             }
             this->handle_messages();
