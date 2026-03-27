@@ -20,6 +20,7 @@ private:
     unsigned long last_tcp_reconnect_attempt = 0;
     bool awaiting_pong = false;
     bool was_disconnected = true;
+    bool was_tcp_connected = false;
     uint32_t last_lookup_time_ms = 0;
     WiFiClient client;
     IPAddress tank_ip;
@@ -30,6 +31,11 @@ private:
             return false;
         }
         client.stop();
+        // Cap the TCP connect timeout to avoid blocking the main loop for
+        // seconds when the server is unreachable.  200 ms is generous for a
+        // LAN connection (typically <10 ms) and short enough to avoid any
+        // visible glitch in software PWM, which runs in timer1 ISR.
+        client.setTimeout(200);
         Log.info("[CLIENT] Connecting to TCP server...");
         if (client.connect(this->tank_ip, TCP_SERVER_PORT)) {
             client.setNoDelay(true);
@@ -71,6 +77,8 @@ public:
 
     }
 
+    bool isConnected() { return client.connected(); }
+
     bool send_pump_request(bool enable)
     {
         if (!client.connected())
@@ -93,9 +101,8 @@ public:
     {
         if (WiFi.status() != WL_CONNECTED)
         {
-            if (this->was_disconnected && this->on_disconnect)
+            if (!this->was_disconnected && this->on_disconnect)
             {
-                // TODO: Notify
                 on_disconnect();
             }
 
@@ -113,7 +120,17 @@ public:
             IPAddress ip;
 
             Log.info("[CLIENT] Resolving tank.local...");
+            // Use a short timeout (200 ms) so an unreachable host doesn't
+            // stall the main loop for seconds and disrupt software PWM.
+            // ESP32 WiFi.hostByName() has no timeout overload; on that platform
+            // the SDK's own DNS timeout (~3 s) applies but since FEATURE_NIGHTLIGHT
+            // (ESP32) does not depend on the tank server being reachable, this is
+            // acceptable.
+#ifdef ESP8266
+            WiFi.hostByName("tank.local", ip, 200);
+#else
             WiFi.hostByName("tank.local", ip);
+#endif
             if (ip != INADDR_NONE) {
                 this->tank_ip = ip;
                 Log.info("[CLIENT] tank.local resolved to: ");
@@ -126,6 +143,14 @@ public:
         }
         this->was_disconnected = false;
 
+        // Detect TCP-level drop while WiFi stays up
+        if (this->was_tcp_connected && !client.connected())
+        {
+            Log.warn("[CLIENT] TCP connection lost");
+            if (this->on_disconnect)
+                this->on_disconnect();
+        }
+
         // Handle connection
         if (!client.connected())
         {
@@ -136,6 +161,8 @@ public:
                 this->awaiting_pong = false;
             }
         }
+
+        this->was_tcp_connected = client.connected();
 
         if (client.connected())
         {
