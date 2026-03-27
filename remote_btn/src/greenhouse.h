@@ -34,8 +34,8 @@
 // --- Pin definitions ---
 #define LDR_PIN         3       // Light sensor (ADC)
 #define MOISTURE_PIN    9       // Soil moisture sensor (ADC via amplifier)
-#define LIGHT_PIN       35      // Digital output: lamp relay
-#define VALVE_PIN       7       // Digital output: irrigation valve relay
+#define LIGHT_PIN       7       // Digital output: lamp relay
+#define VALVE_PIN       35      // Digital output: irrigation valve relay
 
 // When the moisture sensor is disconnected the 1MΩ external pulldown holds GPIO9 near GND → ~0 ADC.
 // The sensor minimum (submerged in water) reads ~310 ADC, so 50 is a very safe disconnect threshold.
