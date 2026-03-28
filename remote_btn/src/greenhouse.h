@@ -84,6 +84,9 @@ class GreenhouseCtrl {
 public:
     GreenhouseConfig config;
 
+    // --- Pump control callback (set by main.cpp) ---
+    void (*on_pump_request)(bool enable) = nullptr;
+
     // --- Light sensor state ---
     uint16_t ldr_reading = 0;
     uint16_t ldr_history[HISTORY_SIZE];
@@ -107,6 +110,38 @@ public:
     unsigned long    irr_state_start_ms = 0;    // When current state began
 
     bool isTimeSynced() const { return g_gh_time_synced; }
+
+    // Called from main.cpp when the LOCAL user presses the pump button.
+    // pump_on: true = user wants pump ON, false = user wants pump OFF.
+    void userPumpToggle(bool pump_on)
+    {
+        m_external_pump_on = pump_on;
+        if (on_pump_request)
+            on_pump_request(pump_on);
+
+        if (!pump_on)
+            pumpForcedOff();
+    }
+
+    // Called from pump_state_cb whenever the tank server reports a new state.
+    // Detects external pump activation (another remote_btn or tank button)
+    // and external pump shutoff (timeout, dry-run, other user).
+    void notifyPumpState(PumpState state)
+    {
+        bool pump_on = (state >= PumpIdle);  // Idle, Running, Warning = pump enabled
+        if (pump_on && !m_irr_pump_on)
+        {
+            // Pump turned on but not by our irrigation → someone else did it
+            m_external_pump_on = true;
+        }
+        else if (!pump_on)
+        {
+            // Pump turned off (Off, DryRun) — clear overrides
+            m_external_pump_on = false;
+            m_irr_pump_on = false;
+            pumpForcedOff();
+        }
+    }
 
     void begin()
     {
@@ -195,9 +230,11 @@ public:
     }
 
 private:
-    bool           m_sensor_ready  = false;
-    unsigned long  m_last_avg_ms   = 0;
-    unsigned long  m_last_history_ms = 0;
+    bool           m_sensor_ready     = false;
+    unsigned long  m_last_avg_ms      = 0;
+    unsigned long  m_last_history_ms  = 0;
+    bool           m_irr_pump_on      = false;  // Irrigation requested pump on
+    bool           m_external_pump_on = false;  // Pump on due to user (local or remote button)
 
     // --- Light evaluation (CH1): digital on/off ---
     void evaluateLight(unsigned long /*now_ms*/)
@@ -259,7 +296,7 @@ private:
 
         if (!cfg.enabled)
         {
-            if (valve_on) setValve(false);
+            if (valve_on) irrigationSetValve(false);
             irr_state = IRR_IDLE;
             irr_cycle_count = 0;
             return;
@@ -268,7 +305,7 @@ private:
         // Sensor disconnected: close valve and stay idle until sensor returns
         if (!moisture_sensor_ok)
         {
-            if (valve_on) setValve(false);
+            if (valve_on) irrigationSetValve(false);
             if (irr_state != IRR_IDLE)
             {
                 Log.warn("[GH] Moisture sensor disconnected — aborting irrigation");
@@ -299,7 +336,7 @@ private:
             // premature cutoff (relay must not chatter).
             if (elapsed_sec >= on_sec)
             {
-                setValve(false);
+                irrigationSetValve(false);
                 irr_state = IRR_SOAKING;
                 irr_state_start_ms = now_ms;
                 Log.info("[GH] Irrigation: soaking (%lu min)", cfg.irrigate_off_min);
@@ -344,7 +381,7 @@ private:
     void startWatering(unsigned long now_ms)
     {
         irr_cycle_count++;
-        setValve(true);
+        irrigationSetValve(true);
         irr_state = IRR_WATERING;
         irr_state_start_ms = now_ms;
         Log.info("[GH] Irrigation: cycle %d, watering (%lu min)",
@@ -355,6 +392,43 @@ private:
     {
         valve_on = on;
         digitalWrite(VALVE_PIN, on ? RELAY_ON : RELAY_OFF);
+    }
+
+    // Valve control with coupled pump management for irrigation.
+    // Starts pump when valve opens (unless already running externally).
+    // Stops pump when valve closes (unless started by a user).
+    void irrigationSetValve(bool on)
+    {
+        setValve(on);
+        if (on)
+        {
+            m_irr_pump_on = true;
+            if (on_pump_request && !m_external_pump_on)
+                on_pump_request(true);
+        }
+        else
+        {
+            m_irr_pump_on = false;
+            if (on_pump_request && !m_external_pump_on)
+                on_pump_request(false);
+        }
+    }
+
+    // Close valve and transition irrigation to soak when pump is forced off
+    // (by user button press or server shutoff).
+    void pumpForcedOff()
+    {
+        if (valve_on)
+        {
+            setValve(false);
+            m_irr_pump_on = false;
+            if (irr_state == IRR_WATERING)
+            {
+                irr_state = IRR_SOAKING;
+                irr_state_start_ms = millis();
+                Log.info("[GH] Pump forced off — valve closed, entering soak");
+            }
+        }
     }
 
     // Convert raw ADC to moisture percent.

@@ -75,6 +75,9 @@ static void disconnect_cb(void)
 static void pump_state_cb(PumpState state)
 {
     g_pump_state = state;
+#ifdef FEATURE_GREENHOUSE
+    greenhouse.notifyPumpState(state);
+#endif
     switch (state)
     {
         case PumpOff:
@@ -132,6 +135,7 @@ void setup()
 
 #ifdef FEATURE_GREENHOUSE
     greenhouse.begin();
+    greenhouse.on_pump_request = [](bool enable) { tank_client.send_pump_request(enable); };
     gh_server.begin(&greenhouse);
     Log.info("Greenhouse feature enabled");
 #endif
@@ -164,16 +168,22 @@ void loop()
         if (check_button())
         {
             Log.info("Button pressed");
+            bool pump_on;
             switch (g_pump_state)
             {
                 case PumpRunning:
                 case PumpIdle:
-                    tank_client.send_pump_request(false);
+                    pump_on = false;
                     break;
                 default:
-                    tank_client.send_pump_request(true);
+                    pump_on = true;
                     break;
             }
+#ifdef FEATURE_GREENHOUSE
+            greenhouse.userPumpToggle(pump_on);
+#else
+            tank_client.send_pump_request(pump_on);
+#endif
         }
         led.update(ticks);
 
