@@ -236,21 +236,53 @@ private:
     bool           m_irr_pump_on      = false;  // Irrigation requested pump on
     bool           m_external_pump_on = false;  // Pump on due to user (local or remote button)
 
+    // LDR debounce: track when reading first crossed each twilight threshold
+    unsigned long  m_ldr_dark_since_ms   = 0;   // When LDR first dropped below twilight_on
+    unsigned long  m_ldr_bright_since_ms = 0;   // When LDR first rose above twilight_off
+
     // --- Light evaluation (CH1): digital on/off ---
-    void evaluateLight(unsigned long /*now_ms*/)
+    void evaluateLight(unsigned long now_ms)
     {
         const LightCfg& cfg = config.data.light;
+        // LDR must stay above/below threshold for this long before state changes
+        const unsigned long LDR_DEBOUNCE_MS = 5UL * 60UL * 1000UL;
 
-        // Twilight detection with hysteresis
+        // Twilight detection with hysteresis and 5-minute debounce
         if (is_dark)
         {
             if (ldr_reading > cfg.twilight_off)
-                is_dark = false;
+            {
+                if (m_ldr_bright_since_ms == 0)
+                    m_ldr_bright_since_ms = now_ms;
+                else if (now_ms - m_ldr_bright_since_ms >= LDR_DEBOUNCE_MS)
+                {
+                    is_dark = false;
+                    m_ldr_bright_since_ms = 0;
+                    Log.info("[GH] LDR bright for 5 min, is_dark = false");
+                }
+            }
+            else
+            {
+                m_ldr_bright_since_ms = 0;  // Dropped back — reset timer
+            }
         }
         else
         {
             if (ldr_reading < cfg.twilight_on)
-                is_dark = true;
+            {
+                if (m_ldr_dark_since_ms == 0)
+                    m_ldr_dark_since_ms = now_ms;
+                else if (now_ms - m_ldr_dark_since_ms >= LDR_DEBOUNCE_MS)
+                {
+                    is_dark = true;
+                    m_ldr_dark_since_ms = 0;
+                    Log.info("[GH] LDR dark for 5 min, is_dark = true");
+                }
+            }
+            else
+            {
+                m_ldr_dark_since_ms = 0;  // Recovered — reset timer
+            }
         }
 
         // Time schedule check
