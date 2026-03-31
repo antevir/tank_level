@@ -87,3 +87,14 @@ void tcp_server_set_command_handler(CommandHandler handler)
 {
     command_handler = handler;
 }
+
+int tcp_server_connected_count()
+{
+    int count = 0;
+    for (int i = 0; i < MAX_CLIENTS; ++i) {
+        if (clients[i] && clients[i].connected()) {
+            count++;
+        }
+    }
+    return count;
+}

@@ -8,23 +8,160 @@
 #include "server.h"
 #include "tank.h"
 #include "pump.h"
+#include "tcp_server.h"
 
 static ESP8266WebServer server(80);
 
-static String getContentType(String filename)
-{ // convert the file extension to the MIME type
-    if (filename.endsWith(".html"))
-        return "text/html";
-    else if (filename.endsWith(".css"))
-        return "text/css";
-    else if (filename.endsWith(".js"))
-        return "application/javascript";
-    else if (filename.endsWith(".ico"))
-        return "image/x-icon";
-    else if (filename.endsWith(".gz"))
-        return "application/x-gzip";
-    return "text/plain";
+// ─── Embedded Dashboard HTML ───────────────────────────────────────────────
+static const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tank Dashboard</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;max-width:960px;margin:0 auto;padding:10px;background:#1a1a2e;color:#e0e0e0}
+h1{color:#16c79a;margin:10px 0;font-size:1.5em}
+h2{color:#16c79a;margin:8px 0;font-size:1.2em}
+.card{background:#162447;border-radius:8px;padding:15px;margin:10px 0}
+.btn{background:#16c79a;color:#1a1a2e;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;margin:4px;font-weight:bold;text-decoration:none;display:inline-block}
+.btn:hover{background:#1df0b0}
+.btn-sec{background:#555;color:#fff}
+.btn-sec:hover{background:#777}
+.btn-del{background:#c73e1d;color:#fff}
+.btn-del:hover{background:#e8421e}
+.ind{display:inline-block;padding:3px 10px;border-radius:4px;font-size:0.85em;font-weight:bold;margin:2px 4px}
+.ind-on{background:#16c79a;color:#000}
+.ind-off{background:#555;color:#ccc}
+.ind-warn{background:#e6a117;color:#000}
+.ind-err{background:#c73e1d;color:#fff}
+.status-val{font-size:1.3em;font-weight:bold;color:#16c79a}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:6px 0}
+.hdr{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap}
+.tank-bar-wrap{width:100%;max-width:300px;height:260px;background:#0d1b2a;border-radius:8px;position:relative;overflow:hidden;border:2px solid #16c79a}
+.tank-bar{position:absolute;bottom:0;width:100%;background:linear-gradient(0deg,#0d47a1,#4fc3f7);transition:height 0.8s;display:flex;align-items:center;justify-content:center;font-size:1.8em;font-weight:bold;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,0.5)}
+.stat-table{width:100%}
+.stat-table td,.stat-table th{padding:6px 10px;border-bottom:1px solid #1b2838;text-align:left}
+.stat-table th{color:#888;font-weight:normal;width:45%}
+canvas{width:100%;background:#0d1b2a;border-radius:4px;margin-top:8px}
+.legend{display:flex;gap:12px;margin:4px 0;font-size:0.8em}
+.legend i{display:inline-block;width:20px;height:3px;vertical-align:middle;margin-right:3px}
+.tab-bar{display:flex;gap:4px;margin:8px 0}
+.tab-bar button{background:#1b2838;color:#888;border:none;padding:6px 14px;border-radius:4px 4px 0 0;cursor:pointer;font-weight:bold}
+.tab-bar button.active{background:#16c79a;color:#1a1a2e}
+</style></head><body>
+<h1>&#x1F4A7; Tank Dashboard</h1>
+
+<div class="card"><h2>System Status</h2>
+<div class="row">
+<span id="pumpInd" class="ind ind-off">Pump: -</span>
+<span id="connInd" class="ind ind-off">Clients: 0</span>
+</div></div>
+
+<div class="card">
+<div class="row" style="align-items:flex-start;gap:20px">
+<div class="tank-bar-wrap"><div class="tank-bar" id="tankBar">-</div></div>
+<div style="flex:1;min-width:200px">
+<table class="stat-table">
+<tr><th>Remaining Water</th><td id="water">-</td></tr>
+<tr><th>24h Harvest</th><td id="harvest">-</td></tr>
+<tr><th>24h Consumption</th><td id="consumed">-</td></tr>
+<tr><th>Pump State</th><td id="pstate">-</td></tr>
+<tr><th>Pump Current</th><td id="pcurrent">-</td></tr>
+</table>
+<div class="row" style="margin-top:12px">
+<button class="btn" onclick="pumpCmd('enable')">Enable Pump</button>
+<button class="btn btn-del" onclick="pumpCmd('disable')">Disable Pump</button>
+</div>
+</div></div></div>
+
+<div class="card">
+<h2>History</h2>
+<div class="tab-bar">
+<button class="active" onclick="loadHist('24h',this)">24 h</button>
+<button onclick="loadHist('7d',this)">7 days</button>
+<button onclick="loadHist('30d',this)">30 days</button>
+</div>
+<div class="legend">
+<span><i style="background:#4fc3f7"></i>Tank Level (%)</span>
+<span><i style="background:#e6a117"></i>Consumption</span>
+</div>
+<canvas id="chart" height="200"></canvas>
+</div>
+
+<script>
+function fetchStats(){
+fetch('/stats.json').then(function(r){return r.json();}).then(function(d){
+var pct=d.TANK.LVL/10;
+document.getElementById('tankBar').style.height=pct+'%';
+document.getElementById('tankBar').textContent=Math.round(pct)+'%';
+document.getElementById('water').textContent=d.TANK.LVL+' L';
+var sign=d.TANK.HARV>0?'+':'';
+document.getElementById('harvest').textContent=sign+d.TANK.HARV+' L';
+document.getElementById('consumed').textContent=d.TANK.CONS+' L';
+document.getElementById('pstate').textContent=d.PUMP.STATETEXT;
+document.getElementById('pcurrent').textContent=d.PUMP.CUR+' mA';
+var pi=document.getElementById('pumpInd');
+var ps=d.PUMP.STATE;
+var pL={'-2':'Pump: DryRun','-1':'Pump: Off','0':'Pump: Idle','1':'Pump: Running','2':'Pump: Warning'};
+var pC={'-2':'ind ind-err','-1':'ind ind-off','0':'ind ind-off','1':'ind ind-on','2':'ind ind-warn'};
+pi.className=pC[String(ps)]||'ind ind-off';pi.textContent=pL[String(ps)]||'Pump: ?';
+var ci=document.getElementById('connInd');
+var nc=d.TCP_CLIENTS||0;
+ci.className=nc>0?'ind ind-on':'ind ind-off';
+ci.textContent='Clients: '+nc;
+}).catch(function(){});}
+
+function pumpCmd(action){
+fetch('/'+action+'_pump',{method:'POST'}).then(function(){setTimeout(fetchStats,500);}).catch(function(){});}
+
+var histData=[],histMode='24h';
+function loadHist(mode,btn){
+histMode=mode;
+document.querySelectorAll('.tab-bar button').forEach(function(b){b.className='';});
+if(btn)btn.className='active';
+var url=mode=='24h'?'/24h_history.json':'/last30days.json';
+fetch(url).then(function(r){return r.json();}).then(function(data){
+if(mode=='7d'){var d=new Date();d.setDate(d.getDate()-7);
+data=data.filter(function(s){return new Date((s.TS-7200)*1000)>=d;});}
+histData=data;drawHist();
+}).catch(function(){});}
+
+function drawHist(){
+var c=document.getElementById('chart');if(!c)return;var ctx=c.getContext('2d');
+var dpr=window.devicePixelRatio||1,rect=c.getBoundingClientRect();
+c.width=rect.width*dpr;c.height=200*dpr;ctx.scale(dpr,dpr);
+var W=rect.width,H=200,data=histData,n=data.length;
+ctx.clearRect(0,0,W,H);ctx.fillStyle='#0d1b2a';ctx.fillRect(0,0,W,H);
+ctx.strokeStyle='#222';ctx.lineWidth=0.5;
+for(var i=0;i<=4;i++){var y=H*i/4;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();
+ctx.fillStyle='#555';ctx.font='10px Arial';ctx.fillText(Math.round(100*(1-i/4))+'%',2,y+10);}
+if(n<1)return;
+// Time labels
+var t0=data[0].TS,t1=data[n-1].TS;
+ctx.fillStyle='#555';
+for(var i=0;i<=6;i++){var x=W*i/6;
+var ts=new Date((t0+(t1-t0)*i/6-7200)*1000);
+var lbl;
+if(histMode=='24h')lbl=('0'+ts.getHours()).slice(-2)+':'+('0'+ts.getMinutes()).slice(-2);
+else lbl=(ts.getMonth()+1)+'/'+ts.getDate();
+ctx.fillText(lbl,i<6?x+2:x-30,H-3);}
+// Level line
+ctx.strokeStyle='#4fc3f7';ctx.lineWidth=1.5;ctx.beginPath();
+for(var i=0;i<n;i++){var x=n>1?i/(n-1)*W:W/2;var y=H-(data[i].LVL/1000*H);
+if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}ctx.stroke();
+// Consumption bars
+var maxCons=0;for(var i=0;i<n;i++){if(data[i].CONS>maxCons)maxCons=data[i].CONS;}
+if(maxCons>0){ctx.fillStyle='rgba(230,161,23,0.4)';
+var bw=Math.max(2,W/n*0.6);
+for(var i=0;i<n;i++){var x=n>1?i/(n-1)*W:W/2;var bh=data[i].CONS/maxCons*(H*0.3);
+ctx.fillRect(x-bw/2,H-bh,bw,bh);}}
 }
+
+window.addEventListener('resize',drawHist);
+fetchStats();setInterval(fetchStats,3000);loadHist('24h',document.querySelector('.tab-bar button'));
+</script></body></html>)rawliteral";
+
+// ─── SD card JSON helpers (unchanged) ──────────────────────────────────────
 
 static bool sendHistoryJson(String path)
 {
@@ -36,7 +173,7 @@ static bool sendHistoryJson(String path)
             String header =
                 String("HTTP/1.1 200 OK\r\n") +
                 "Content-Type: text/json\r\n" +
-                "Connection: close\r\n" + // the connection will be closed after completion of the response
+                "Connection: close\r\n" +
                 "\r\n";
             WiFiClient client = server.client();
             client.print(header + "[");
@@ -111,66 +248,16 @@ static bool sendLast30daysJson(String path)
     return ret;
 }
 
-static bool sendFile(String path)
-{ // send the right file to the client (if it exists)
-    Log.info("handleFileRead: %s", path.c_str());
-    if (path.endsWith("/"))
-        path += "index.html";                  // If a folder is requested, send the index file
-    String contentType = getContentType(path); // Get the MIME type
-    String pathWithGz = path + ".gz";
-    if (sendLast30daysJson(path))
-    {
-        return true;
-    }
-
-    if (SPIFFS.exists(pathWithGz) || SPIFFS.exists(path))
-    {                                                       // If the file exists, either as a compressed archive, or normal
-        if (SPIFFS.exists(pathWithGz))                      // If there's a compressed version available
-            path += ".gz";                                  // Use the compressed verion
-        File file = SPIFFS.open(path, "r");                 // Open the file
-        size_t sent = server.streamFile(file, contentType); // Send it to the client
-        file.close();                                       // Close the file again
-        Log.info("Sent file: %s", path.c_str());
-        return true;
-    }
-    if (sendHistoryJson(path))
-    {
-        return true;
-    }
-    Log.warn("File Not Found: %s", path.c_str()); // If the file doesn't exist, return false
-    return false;
-}
-
 void server_init()
 {
-    SPIFFS.begin();
-
-    server.onNotFound([]() {                                  // If the client requests any URI
-        if (!sendFile(server.uri()))                          // send it if it exists
-            server.send(404, "text/plain", "404: Not Found"); // otherwise, respond with a 404 (Not Found) error
-    });
-
-    server.on("/all", HTTP_GET, []() {
-        String json = "{";
-        json += "\"heap\":" + String(ESP.getFreeHeap());
-        json += ", \"analog\":" + String(analogRead(A0));
-        json += ", \"gpio\":" + String((uint32_t)(((GPI | GPO) & 0xFFFF) | ((GP16I & 0x01) << 16)));
-        json += "}";
-        server.send(200, "text/json", json);
-        json = String();
-    });
-
-    server.on("/time", HTTP_GET, []() {
-        String json = "{";
-        json += "\"epoch\":" + String(now());
-        json += "}";
-        server.send(200, "text/json", json);
-        json = String();
+    server.on("/", HTTP_GET, []() {
+        server.send_P(200, PSTR("text/html"), INDEX_HTML);
     });
 
     server.on("/stats.json", HTTP_GET, []() {
         String json = "{\"TANK\":" + tank_get_stats_json();
-        json += ",\"PUMP\":" + pump_get_stats_json() + "}";
+        json += ",\"PUMP\":" + pump_get_stats_json();
+        json += ",\"TCP_CLIENTS\":" + String(tcp_server_connected_count()) + "}";
         server.send(200, "text/json", json);
     });
 
@@ -179,16 +266,25 @@ void server_init()
     });
 
     server.on("/enable_pump", HTTP_POST, []() {
-        server.send(200, "text/plain", "Post route");
         pump_enable();
+        server.send(200, "text/plain", "OK");
     });
 
     server.on("/disable_pump", HTTP_POST, []() {
-        server.send(200, "text/plain", "Post route");
         pump_disable();
+        server.send(200, "text/plain", "OK");
     });
 
-    // Start the server
+    // SD card history files (last30days, monthly, yearly)
+    server.onNotFound([]() {
+        String uri = server.uri();
+        if (sendLast30daysJson(uri))
+            return;
+        if (sendHistoryJson(uri))
+            return;
+        server.send(404, "text/plain", "404: Not Found");
+    });
+
     server.begin();
     Log.info("Server started");
 }
