@@ -11,6 +11,7 @@
 #endif
 
 #include "greenhouse_config.h"
+#include "nexa.h"
 #include "Log.h"
 
 /*
@@ -83,6 +84,7 @@ static void ghTimeSyncCb()
 class GreenhouseCtrl {
 public:
     GreenhouseConfig config;
+    NexaController    nexa;
 
     // --- Pump control callback (set by main.cpp) ---
     void (*on_pump_request)(bool enable) = nullptr;
@@ -171,6 +173,8 @@ public:
         configTime(GH_TIME_ZONE, "pool.ntp.org", "time.nist.gov");
 #endif
 
+        nexa.init();  // Start mDNS for Nexa plug discovery
+
         Log.info("[GH] Greenhouse controller initialized");
     }
 
@@ -216,6 +220,7 @@ public:
 
         evaluateLight(now_ms);
         evaluateIrrigation(now_ms);
+        nexa.update(config.data.nexa, is_dark, g_gh_time_synced);
     }
 
     // Calibrate dry point: record current reading as 0% (sensor in dry air)
@@ -474,27 +479,7 @@ private:
         return (uint8_t)constrain(pct, 0, 100);
     }
 
-    static bool isTimeInSpan(const struct tm* tm_now, const TimeSpanCfg& ts)
-    {
-        // tm_wday: 0=Sun, 1=Mon ... 6=Sat → bitmask: bit0=Mon ... bit6=Sun
-        int bit;
-        if (tm_now->tm_wday == 0)
-            bit = 6;
-        else
-            bit = tm_now->tm_wday - 1;
-
-        if (!((ts.weekdays >> bit) & 1))
-            return false;
-
-        int now_min   = tm_now->tm_hour * 60 + tm_now->tm_min;
-        int start_min = ts.start_hour   * 60 + ts.start_minute;
-        int end_min   = ts.end_hour     * 60 + ts.end_minute;
-
-        if (start_min <= end_min)
-            return now_min >= start_min && now_min < end_min;
-        else
-            return now_min >= start_min || now_min < end_min;
-    }
+    // isTimeInSpan() is now a free inline function in greenhouse_config.h
 };
 
 #endif // FEATURE_GREENHOUSE

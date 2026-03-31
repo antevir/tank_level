@@ -3,10 +3,14 @@
 #ifdef FEATURE_GREENHOUSE
 
 #include <EEPROM.h>
+#include <time.h>
 
 // Bump magic when struct layout changes so old EEPROM content is discarded.
-#define CONFIG_MAGIC      0x4E4C4307  // "NLC" + version 7
+#define CONFIG_MAGIC      0x4E4C4309  // "NLC" + version 9 (Nexa mDNS discovery)
 #define MAX_TIME_SPANS    4
+#define MAX_NEXA_PLUGS    4
+#define NEXA_NAME_LEN     16
+#define NEXA_HOST_LEN     32
 #define EEPROM_SIZE       512
 
 // --- Light channel (CH1) config ---
@@ -42,11 +46,54 @@ struct IrrigationCfg {
     uint8_t  enabled;               // 0=disabled, 1=enabled
 };
 
+// --- Nexa smart plug config ---
+// Each plug is discovered via mDNS (_systemnexa2._tcp) and controlled via
+// HTTP GET http://<resolved_ip>:3000/state?v=0|1
+struct NexaPlugCfg {
+    char     hostname[NEXA_HOST_LEN];       // mDNS hostname (e.g. "WPO-01-abc", no .local suffix)
+    char     name[NEXA_NAME_LEN];           // Display name (null-terminated)
+    uint8_t  enabled;
+    uint8_t  num_time_spans;
+    uint8_t  _pad[2];
+    TimeSpanCfg time_spans[MAX_TIME_SPANS]; // Per-plug time schedules
+};
+
+struct NexaCfg {
+    uint8_t  num_plugs;                     // 0..MAX_NEXA_PLUGS
+    uint8_t  _pad[3];
+    NexaPlugCfg plugs[MAX_NEXA_PLUGS];
+};
+
 struct GreenhouseCfgData {
     uint32_t magic;
     LightCfg      light;
     IrrigationCfg irrigation;
+    NexaCfg       nexa;
 };
+
+// --- Shared time-in-span helper (used by greenhouse.h and nexa.h) ---
+// Handles wrapping around midnight (e.g. 21:00 → 07:00).
+inline bool isTimeInSpan(const struct tm* tm_now, const TimeSpanCfg& ts)
+{
+    // tm_wday: 0=Sun, 1=Mon ... 6=Sat → bitmask: bit0=Mon ... bit6=Sun
+    int bit;
+    if (tm_now->tm_wday == 0)
+        bit = 6;
+    else
+        bit = tm_now->tm_wday - 1;
+
+    if (!((ts.weekdays >> bit) & 1))
+        return false;
+
+    int now_min   = tm_now->tm_hour * 60 + tm_now->tm_min;
+    int start_min = ts.start_hour   * 60 + ts.start_minute;
+    int end_min   = ts.end_hour     * 60 + ts.end_minute;
+
+    if (start_min <= end_min)
+        return now_min >= start_min && now_min < end_min;
+    else
+        return now_min >= start_min || now_min < end_min;
+}
 
 class GreenhouseConfig {
 public:
@@ -103,6 +150,9 @@ public:
         data.irrigation.irrigate_off_min   = 20;    // 20 min soak
         data.irrigation.max_cycles         = 6;     // Safety: max 6 cycles
         data.irrigation.enabled            = 0;     // Off by default
+
+        // --- Nexa defaults (all empty/disabled) ---
+        data.nexa.num_plugs = 0;
     }
 };
 
