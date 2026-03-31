@@ -2,10 +2,11 @@
 #include "common.h"
 #include "Led.h"
 #include "TankClient.h"
+#include "greenhouse_server.h"
 
-#define BUTTON_PIN      4  // D2
-#define LED_GREEN_PIN   12 // D6
-#define LED_RED_PIN     15 // D8
+#define LED_GREEN_PIN   16
+#define LED_RED_PIN     18
+#define BUTTON_PIN      33
 
 #define TICK_MS     100
 
@@ -13,7 +14,13 @@ static uint32_t ticks;
 static Led led;
 static TankClient tank_client;
 
-static PumpState g_pump_state = PumpOff;
+// Exposed to GreenhouseServer via extern for UI indicators
+volatile PumpState g_pump_state    = PumpOff;
+volatile bool     g_button_pressed = false;
+volatile bool     g_tank_connected = false;
+
+static GreenhouseCtrl greenhouse;
+static GreenhouseServer gh_server;
 
 static bool check_button()
 {
@@ -55,6 +62,7 @@ static void disconnect_cb(void)
 static void pump_state_cb(PumpState state)
 {
     g_pump_state = state;
+    greenhouse.notifyPumpState(state);
     switch (state)
     {
         case PumpOff:
@@ -89,36 +97,34 @@ void setup()
     // Connect to WiFi network
     setupWifi();
 
-#ifdef ESP8266
-    // Disable modem sleep so the radio stays on permanently.
-    WiFi.setSleepMode(WIFI_NONE_SLEEP);
-#endif
-
     if (!MDNS.begin(APP_NAME))
     {
         Log.error("Error setting up MDNS responder!");
     }
-#ifdef ESP8266
-    Log.info("Free stack: %d", ESP.getFreeContStack());
-#endif
 
     setupOta();
+
+    greenhouse.begin();
+    greenhouse.on_pump_request = [](bool enable) { tank_client.send_pump_request(enable); };
+    gh_server.begin(&greenhouse);
+    Log.info("Greenhouse started");
 }
 
 void loop()
 {
     static uint32_t last_millis = 0;
 
-#ifdef ESP8266
-    MDNS.update();
-#endif
     ArduinoOTA.handle();
     tank_client.handle();
+    g_tank_connected = tank_client.isConnected();
+    gh_server.handle();
 
     uint32_t diff_ms = millis() - last_millis;
     if (diff_ms > TICK_MS) {
         ticks += diff_ms / TICK_MS;
         last_millis = millis();
+
+        g_button_pressed = (digitalRead(BUTTON_PIN) == LOW);
 
         if (check_button())
         {
@@ -134,8 +140,9 @@ void loop()
                     pump_on = true;
                     break;
             }
-            tank_client.send_pump_request(pump_on);
+            greenhouse.userPumpToggle(pump_on);
         }
         led.update(ticks);
+        greenhouse.update();
     }
 }

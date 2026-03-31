@@ -1,9 +1,10 @@
 #pragma once
 
-#ifdef FEATURE_GREENHOUSE
-
 #include <EEPROM.h>
 #include <time.h>
+#include <cstdint>
+
+#include "irrigation.h"
 
 // Bump magic when struct layout changes so old EEPROM content is discarded.
 #define CONFIG_MAGIC      0x4E4C4309  // "NLC" + version 9 (Nexa mDNS discovery)
@@ -30,20 +31,6 @@ struct LightCfg {
     uint8_t  num_time_spans;
     uint8_t  _pad;
     TimeSpanCfg time_spans[MAX_TIME_SPANS];
-};
-
-// --- Irrigation channel (CH2) config ---
-// Wet calibration is fixed at MOISTURE_CAL_WET (100 ADC) — no need to calibrate the wet end
-// because the sensor minimum (in water ~310 ADC) is already well above 0 and the clamping
-// in adcToPercent() maps anything ≤ 100 ADC to 100%.
-struct IrrigationCfg {
-    uint16_t moisture_cal_dry;      // ADC value when sensor is in dry air (~775 = 2.5 V →   0%)
-    uint8_t  dry_threshold_pct;     // % — start irrigating when moisture BELOW this
-    uint8_t  wet_threshold_pct;     // % — stop  irrigating when moisture ABOVE this
-    uint16_t irrigate_on_min;       // Minutes to run the valve per cycle
-    uint16_t irrigate_off_min;      // Minutes to wait (soak) between cycles
-    uint8_t  max_cycles;            // Safety limit: max consecutive cycles before forced pause
-    uint8_t  enabled;               // 0=disabled, 1=enabled
 };
 
 // --- Nexa smart plug config ---
@@ -155,5 +142,3 @@ public:
         data.nexa.num_plugs = 0;
     }
 };
-
-#endif // FEATURE_GREENHOUSE

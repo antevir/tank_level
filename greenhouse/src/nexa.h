@@ -1,7 +1,5 @@
 #pragma once
 
-#ifdef FEATURE_GREENHOUSE
-
 #include <Arduino.h>
 #include <HTTPClient.h>
 #include <ESPmDNS.h>
@@ -197,5 +195,3 @@ private:
         return (code == 200);
     }
 };
-
-#endif // FEATURE_GREENHOUSE

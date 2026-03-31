@@ -1,7 +1,5 @@
 #pragma once
 
-#ifdef FEATURE_GREENHOUSE
-
 #include <WebServer.h>
 #include "greenhouse.h"
 #include "pump_state.h"
@@ -556,9 +554,9 @@ private:
         j += ",\"ntp\":"       + String(m_gh->isTimeSynced() ? "true" : "false");
         j += ",\"light\":"     + String(m_gh->light_on  ? "true" : "false");
         j += ",\"dark\":"      + String(m_gh->is_dark   ? "true" : "false");
-        j += ",\"valve\":"     + String(m_gh->valve_on  ? "true" : "false");
-        j += ",\"irr_st\":"    + String((int)m_gh->irr_state);
-        j += ",\"irr_cc\":"    + String(m_gh->irr_cycle_count);
+        j += ",\"valve\":"     + String(m_gh->valve_on()  ? "true" : "false");
+        j += ",\"irr_st\":"    + String((int)m_gh->irr_state());
+        j += ",\"irr_cc\":"    + String(m_gh->irr_cycle_count());
         j += ",\"btn\":"       + String(g_button_pressed ? "true" : "false");
         j += ",\"conn\":"      + String(g_tank_connected  ? "true" : "false");
         j += ",\"pump\":"      + String((int)g_pump_state);
@@ -822,5 +820,3 @@ private:
         }
     }
 };
-
-#endif // FEATURE_GREENHOUSE

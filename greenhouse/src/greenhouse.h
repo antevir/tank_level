@@ -1,7 +1,5 @@
 #pragma once
 
-#ifdef FEATURE_GREENHOUSE
-
 #include <Arduino.h>
 #include <time.h>
 #ifdef ESP32
@@ -12,6 +10,7 @@
 
 #include "greenhouse_config.h"
 #include "nexa.h"
+#include "pump_state.h"
 #include "Log.h"
 
 /*
@@ -59,14 +58,6 @@
 // Stockholm timezone
 #define GH_TIME_ZONE "CET-1CEST,M3.5.0,M10.5.0/3"
 
-// --- Irrigation state machine ---
-enum IrrigationState {
-    IRR_IDLE,       // Waiting for soil to get dry
-    IRR_WATERING,   // Valve is open
-    IRR_SOAKING,    // Valve closed, waiting for water to percolate
-    IRR_PAUSED      // Safety limit reached — paused until soil is wet again
-};
-
 // --- NTP sync callback ---
 static volatile bool g_gh_time_synced = false;
 
@@ -105,11 +96,11 @@ public:
     uint16_t moisture_history_count     = 0;
     uint16_t moisture_history_write_idx = 0;
 
-    // --- Irrigation state ---
-    bool             valve_on  = false;
-    IrrigationState  irr_state = IRR_IDLE;
-    uint8_t          irr_cycle_count = 0;       // Current cycle in this burst
-    unsigned long    irr_state_start_ms = 0;    // When current state began
+    // --- Irrigation state (delegated to IrrigationCtrl) ---
+    IrrigationCtrl m_irr;
+    bool           valve_on() const { return m_irr.valve_on; }
+    IrrigationState irr_state() const { return m_irr.state; }
+    uint8_t        irr_cycle_count() const { return m_irr.cycle_count; }
 
     bool isTimeSynced() const { return g_gh_time_synced; }
 
@@ -122,7 +113,7 @@ public:
             on_pump_request(pump_on);
 
         if (!pump_on)
-            pumpForcedOff();
+            pumpForcedOff(millis());
     }
 
     // Called from pump_state_cb whenever the tank server reports a new state.
@@ -133,15 +124,13 @@ public:
         bool pump_on = (state >= PumpIdle);  // Idle, Running, Warning = pump enabled
         if (pump_on && !m_irr_pump_on)
         {
-            // Pump turned on but not by our irrigation → someone else did it
             m_external_pump_on = true;
         }
         else if (!pump_on)
         {
-            // Pump turned off (Off, DryRun) — clear overrides
             m_external_pump_on = false;
             m_irr_pump_on = false;
-            pumpForcedOff();
+            pumpForcedOff(millis());
         }
     }
 
@@ -316,127 +305,24 @@ private:
         }
     }
 
-    // --- Irrigation evaluation (CH2): cycle-based ---
-    //
-    // Gardena micro-drip best practice for greenhouse use:
-    //   1) When soil moisture % < dry_threshold_pct → soil is too dry
-    //   2) Open valve for irrigate_on_min (e.g. 3 min) — fully on, no interruption
-    //   3) Close valve, wait irrigate_off_min (e.g. 20 min) for water
-    //      to reach the sensor depth (7 cm) through the drip emitters
-    //   4) Re-check moisture; if still dry, repeat up to max_cycles
-    //   5) If max_cycles reached, pause until soil reads wet again
-    //      (prevents flooding if sensor fails or is displaced)
-    //
+    // --- Irrigation evaluation (CH2) ---
+    // Delegates state machine to IrrigationCtrl, handles hardware side effects.
     void evaluateIrrigation(unsigned long now_ms)
     {
-        const IrrigationCfg& cfg = config.data.irrigation;
+        bool prev_valve = m_irr.valve_on;
+        m_irr.evaluate(moisture_pct, moisture_sensor_ok,
+                        config.data.irrigation, now_ms);
 
-        if (!cfg.enabled)
+        if (m_irr.valve_on != prev_valve)
         {
-            if (valve_on) irrigationSetValve(false);
-            irr_state = IRR_IDLE;
-            irr_cycle_count = 0;
-            return;
-        }
-
-        // Sensor disconnected: close valve and stay idle until sensor returns
-        if (!moisture_sensor_ok)
-        {
-            if (valve_on) irrigationSetValve(false);
-            if (irr_state != IRR_IDLE)
-            {
-                Log.warn("[GH] Moisture sensor disconnected — aborting irrigation");
-                irr_state = IRR_IDLE;
-                irr_cycle_count = 0;
-            }
-            return;
-        }
-
-        unsigned long on_sec  = (unsigned long)cfg.irrigate_on_min  * 60UL;
-        unsigned long off_sec = (unsigned long)cfg.irrigate_off_min * 60UL;
-        unsigned long elapsed_sec = (now_ms - irr_state_start_ms) / 1000UL;
-
-        switch (irr_state)
-        {
-        case IRR_IDLE:
-            // Soil is dry? (low percent = dry) → start watering
-            if (moisture_pct < cfg.dry_threshold_pct)
-            {
-                irr_cycle_count = 0;
-                startWatering(now_ms);
-            }
-            break;
-
-        case IRR_WATERING:
-            // Keep valve fully ON for the entire on_sec duration.
-            // Only check moisture after the full cycle to avoid noise-induced
-            // premature cutoff (relay must not chatter).
-            if (elapsed_sec >= on_sec)
-            {
-                irrigationSetValve(false);
-                irr_state = IRR_SOAKING;
-                irr_state_start_ms = now_ms;
-                Log.info("[GH] Irrigation: soaking (%lu min)", cfg.irrigate_off_min);
-            }
-            break;
-
-        case IRR_SOAKING:
-            if (elapsed_sec >= off_sec)
-            {
-                // Soak done — check if soil is wet enough
-                if (moisture_pct >= cfg.wet_threshold_pct)
-                {
-                    irr_state = IRR_IDLE;
-                    irr_cycle_count = 0;
-                    Log.info("[GH] Irrigation: soil now wet (%d%%), done", moisture_pct);
-                }
-                else if (irr_cycle_count >= cfg.max_cycles)
-                {
-                    irr_state = IRR_PAUSED;
-                    Log.warn("[GH] Irrigation: max cycles (%d) reached, pausing", cfg.max_cycles);
-                }
-                else
-                {
-                    // Still dry → another cycle
-                    startWatering(now_ms);
-                }
-            }
-            break;
-
-        case IRR_PAUSED:
-            // Stay paused until sensor reads wet
-            if (moisture_pct >= cfg.wet_threshold_pct)
-            {
-                irr_state = IRR_IDLE;
-                irr_cycle_count = 0;
-                Log.info("[GH] Irrigation: soil wet again, unpaused");
-            }
-            break;
+            digitalWrite(VALVE_PIN, m_irr.valve_on ? RELAY_ON : RELAY_OFF);
+            onValveChanged(m_irr.valve_on);
         }
     }
 
-    void startWatering(unsigned long now_ms)
+    // Manage pump coupling when valve state changes.
+    void onValveChanged(bool on)
     {
-        irr_cycle_count++;
-        irrigationSetValve(true);
-        irr_state = IRR_WATERING;
-        irr_state_start_ms = now_ms;
-        Log.info("[GH] Irrigation: cycle %d, watering (%lu min)",
-                 irr_cycle_count, config.data.irrigation.irrigate_on_min);
-    }
-
-    void setValve(bool on)
-    {
-        valve_on = on;
-        digitalWrite(VALVE_PIN, on ? RELAY_ON : RELAY_OFF);
-    }
-
-    // Valve control with coupled pump management for irrigation.
-    // Starts pump when valve opens (unless already running externally).
-    // Stops pump when valve closes (unless started by a user).
-    void irrigationSetValve(bool on)
-    {
-        setValve(on);
         if (on)
         {
             m_irr_pump_on = true;
@@ -451,35 +337,15 @@ private:
         }
     }
 
-    // Close valve and transition irrigation to soak when pump is forced off
-    // (by user button press or server shutoff).
-    void pumpForcedOff()
+    // Close valve and transition irrigation to soak when pump is forced off.
+    void pumpForcedOff(unsigned long now_ms)
     {
-        if (valve_on)
+        if (m_irr.valve_on)
         {
-            setValve(false);
+            m_irr.forceOff(now_ms);
+            digitalWrite(VALVE_PIN, RELAY_OFF);
             m_irr_pump_on = false;
-            if (irr_state == IRR_WATERING)
-            {
-                irr_state = IRR_SOAKING;
-                irr_state_start_ms = millis();
-                Log.info("[GH] Pump forced off — valve closed, entering soak");
-            }
+            Log.info("[GH] Pump forced off — valve closed, entering soak");
         }
     }
-
-    // Convert raw ADC to moisture percent.
-    // cal_wet = ADC in water (100%), cal_dry = ADC in dry air (0%).
-    // Higher ADC = drier, so we invert.
-    static uint8_t adcToPercent(uint16_t adc, uint16_t cal_wet, uint16_t cal_dry)
-    {
-        if (cal_dry <= cal_wet) return 50;  // miscalibrated — return midpoint
-        int range = (int)cal_dry - (int)cal_wet;
-        int pct   = 100 - ((int)adc - (int)cal_wet) * 100 / range;
-        return (uint8_t)constrain(pct, 0, 100);
-    }
-
-    // isTimeInSpan() is now a free inline function in greenhouse_config.h
 };
-
-#endif // FEATURE_GREENHOUSE
