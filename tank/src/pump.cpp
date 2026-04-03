@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <TimeLib.h>
 #include "MedianFilterLib.h"
-#include <ESP8266WiFi.h>
+#include "common.h"
 #include "Log.h"
 #include "pins.h"
 #include "pump.h"

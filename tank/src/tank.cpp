@@ -36,6 +36,11 @@ static RingBufCPP<sample_t, 24> last24hSamples;
 static int last_30days_offset = -1;
 
 static MeanFilter<long> meanFilter(SLOW_MEAN_FILTER_LEN);
+static int filter_entries = 0;
+
+// Health state
+static bool sd_ok = false;
+static bool sensor_ok = false;
 
 static String sample_to_json(sample_t &sample)
 {
@@ -99,6 +104,8 @@ static int get_line_offset(File file, int line_number)
 
 static void update_last_30days()
 {
+    if (!sd_ok)
+        return;
     Log.info("Updating last 30 days");
     String path = year_file_path();
     if (!SD.exists(path))
@@ -122,7 +129,9 @@ static void update_last_30days()
 
 static void store_sample(String path, sample_t &sample)
 {
-    File file = SD.open(path, FILE_WRITE);
+    if (!sd_ok)
+        return;
+    File file = SD.open(path, SD_APPEND);
     if (file)
     {
         String sampStr = sample_to_json(sample);
@@ -130,45 +139,53 @@ static void store_sample(String path, sample_t &sample)
         {
             sampStr = ",\n" + sampStr;
         }
-        file.write(sampStr.c_str());
+        file.print(sampStr);
         file.close();
+        sd_ok = true;
     }
     else
     {
-        Log.error("Failed to open: %s", path.c_str());
+        Log.error("SD: failed to open %s for writing", path.c_str());
+        sd_ok = false;
     }
 }
 
 static bool take_sample()
 {
-    static int filter_entries = 0;
     MedianFilter<long> fastMedianFilter(FAST_MEDIAN_FILTER_LEN);
+    int valid_samples = 0;
     for (int i = 0; i < FAST_MEDIAN_FILTER_LEN; i++)
     {
         digitalWrite(DIST_TRIG_PIN, HIGH);
         delayMicroseconds(10);
         digitalWrite(DIST_TRIG_PIN, LOW);
         long duration = pulseIn(DIST_ECHO_PIN, HIGH, 10000 /* 10 ms timeout */);
-        fastMedianFilter.AddValue(duration);
         if (duration == 0)
         {
-            // Unable to get sensor value
-            Log.warn("Unable to get distance value");
+            Log.warn("Distance sensor timeout (sample %d/%d)", i + 1, FAST_MEDIAN_FILTER_LEN);
             break;
         }
+        fastMedianFilter.AddValue(duration);
+        valid_samples++;
     }
+    if (valid_samples == 0)
+    {
+        // All readings failed — don't corrupt the mean filter with zeros
+        Log.error("Distance sensor: no valid readings");
+        sensor_ok = false;
+        return filter_entries >= SLOW_MEAN_FILTER_LEN;
+    }
+    sensor_ok = true;
     meanFilter.AddValue(fastMedianFilter.GetFiltered());
     if (filter_entries < SLOW_MEAN_FILTER_LEN)
     {
         filter_entries++;
+        if (filter_entries == SLOW_MEAN_FILTER_LEN)
+        {
+            Log.info("Distance filter filled");
+        }
     }
-    if (filter_entries == SLOW_MEAN_FILTER_LEN)
-    {
-        Log.info("Take sample (filled)");
-        return true;
-    }
-    Log.info("Take sample (filling)");
-    return false;
+    return filter_entries >= SLOW_MEAN_FILTER_LEN;
 }
 
 void tank_init()
@@ -181,8 +198,9 @@ void tank_init()
     take_sample();
 }
 
-uint16 tank_get_level()
+uint16_t tank_get_level()
 {
+    if (filter_entries == 0) return 0;
     long distance_mm = (meanFilter.GetFiltered() * 34) / 200; // org: (0.034 / 2)
     distance_mm -= TANK_TOP_DISTANCE_MM;
     if (distance_mm < 0)
@@ -221,6 +239,16 @@ String tank_get_last_24h_json()
         }
     }
     return "[" + json + "]";
+}
+
+void tank_set_sd_ok(bool ok) { sd_ok = ok; }
+bool tank_is_sd_ok() { return sd_ok; }
+bool tank_is_sensor_ok() { return sensor_ok; }
+
+String tank_get_health_json()
+{
+    return "{\"SD\":" + String(sd_ok ? 1 : 0) +
+           ",\"SENSOR\":" + String(sensor_ok ? 1 : 0) + "}";
 }
 
 bool tank_get_last_30days_file_and_offset(String &filename, int &data_offset)

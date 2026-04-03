@@ -1,5 +1,6 @@
 #include "tcp_server.h"
 #include "common.h"
+#include "Log.h"
 
 #define MAX_CLIENTS 3
 #define CLIENT_TIMEOUT_MS 40000
@@ -35,10 +36,12 @@ void tcp_server_loop()
                 String msg = "PUMP_STATE:" + String((int)current_state) + "\n";
                 clients[i].print(msg);  // Send initial state
                 assigned = true;
+                Log.info("[TCP] Client %d connected", i);
                 break;
             }
         }
         if (!assigned) {
+            Log.warn("[TCP] Client rejected, max reached");
             newClient.stop();
         }
     }
@@ -66,6 +69,7 @@ void tcp_server_loop()
 
         // Timeout handling
         if (now - last_activity[i] > CLIENT_TIMEOUT_MS) {
+            Log.warn("[TCP] Client %d timed out", i);
             clients[i].println("TIMEOUT");
             clients[i].stop();
         }

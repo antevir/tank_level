@@ -1,5 +1,10 @@
 #include <Arduino.h>
+#include "common.h"
+#ifdef ESP32
+#include <WebServer.h>
+#else
 #include <ESP8266WebServer.h>
+#endif
 #include <SPI.h>
 #include <SD.h>
 #include <TimeLib.h>
@@ -10,7 +15,11 @@
 #include "pump.h"
 #include "tcp_server.h"
 
+#ifdef ESP32
+static WebServer server(80);
+#else
 static ESP8266WebServer server(80);
+#endif
 
 // ─── Embedded Dashboard HTML ───────────────────────────────────────────────
 static const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
@@ -55,6 +64,8 @@ canvas{width:100%;background:#0d1b2a;border-radius:4px;margin-top:8px}
 <div class="row">
 <span id="pumpInd" class="ind ind-off">Pump: -</span>
 <span id="connInd" class="ind ind-off">Clients: 0</span>
+<span id="sdInd" class="ind ind-off">SD Card: ?</span>
+<span id="sensorInd" class="ind ind-off">Sensor: ?</span>
 </div></div>
 
 <div class="card">
@@ -109,6 +120,13 @@ var ci=document.getElementById('connInd');
 var nc=d.TCP_CLIENTS||0;
 ci.className=nc>0?'ind ind-on':'ind ind-off';
 ci.textContent='Clients: '+nc;
+var h=d.HEALTH||{};
+var si=document.getElementById('sdInd');
+si.className=h.SD?'ind ind-on':'ind ind-err';
+si.textContent=h.SD?'SD Card: OK':'SD Card: FAIL';
+var se=document.getElementById('sensorInd');
+se.className=h.SENSOR?'ind ind-on':'ind ind-err';
+se.textContent=h.SENSOR?'Sensor: OK':'Sensor: FAIL';
 }).catch(function(){});}
 
 function pumpCmd(action){
@@ -257,7 +275,8 @@ void server_init()
     server.on("/stats.json", HTTP_GET, []() {
         String json = "{\"TANK\":" + tank_get_stats_json();
         json += ",\"PUMP\":" + pump_get_stats_json();
-        json += ",\"TCP_CLIENTS\":" + String(tcp_server_connected_count()) + "}";
+        json += ",\"TCP_CLIENTS\":" + String(tcp_server_connected_count());
+        json += ",\"HEALTH\":" + tank_get_health_json() + "}";
         server.send(200, "text/json", json);
     });
 
