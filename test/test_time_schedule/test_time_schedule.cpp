@@ -183,11 +183,11 @@ void test_config_defaults(void)
     TEST_ASSERT_EQUAL_UINT32(CONFIG_MAGIC, cfg.data.magic);
 
     // Light defaults
-    TEST_ASSERT_EQUAL_UINT16(300, cfg.data.light.twilight_on);
-    TEST_ASSERT_EQUAL_UINT16(400, cfg.data.light.twilight_off);
+    TEST_ASSERT_EQUAL_UINT16(600, cfg.data.light.twilight_threshold);
+    TEST_ASSERT_EQUAL_UINT16(200, cfg.data.light.twilight_lamp_offset);
     TEST_ASSERT_EQUAL_UINT8(1, cfg.data.light.num_time_spans);
-    TEST_ASSERT_EQUAL_UINT8(21, cfg.data.light.time_spans[0].start_hour);
-    TEST_ASSERT_EQUAL_UINT8(7, cfg.data.light.time_spans[0].end_hour);
+    TEST_ASSERT_EQUAL_UINT8(16, cfg.data.light.time_spans[0].start_hour);
+    TEST_ASSERT_EQUAL_UINT8(22, cfg.data.light.time_spans[0].end_hour);
     TEST_ASSERT_EQUAL_UINT8(0x7F, cfg.data.light.time_spans[0].weekdays);
     TEST_ASSERT_EQUAL_UINT8(1, cfg.data.light.time_spans[0].enabled);
 
@@ -202,6 +202,7 @@ void test_config_defaults(void)
 
     // Nexa defaults
     TEST_ASSERT_EQUAL_UINT8(0, cfg.data.nexa.num_plugs);
+    TEST_ASSERT_EQUAL_UINT16(700, cfg.data.nexa.nexa_twilight_threshold);
 }
 
 void test_config_fits_in_eeprom(void)

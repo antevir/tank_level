@@ -209,7 +209,9 @@ public:
 
         evaluateLight(now_ms);
         evaluateIrrigation(now_ms);
-        nexa.update(config.data.nexa, is_dark, g_gh_time_synced);
+        nexa.update(config.data.nexa, ldr_reading, light_on,
+                    config.data.light.twilight_lamp_offset,
+                    g_gh_time_synced);
     }
 
     // Calibrate dry point: record current reading as 0% (sensor in dry air)
@@ -230,53 +232,41 @@ private:
     bool           m_irr_pump_on      = false;  // Irrigation requested pump on
     bool           m_external_pump_on = false;  // Pump on due to user (local or remote button)
 
-    // LDR debounce: track when reading first crossed each twilight threshold
-    unsigned long  m_ldr_dark_since_ms   = 0;   // When LDR first dropped below twilight_on
-    unsigned long  m_ldr_bright_since_ms = 0;   // When LDR first rose above twilight_off
+    // LDR debounce: track when reading first crossed the threshold
+    unsigned long  m_ldr_change_since_ms = 0;   // When LDR first crossed threshold
+
+    // Debounce: LDR must stay on the other side of the threshold for this long
+    static constexpr unsigned long LDR_DEBOUNCE_MS = 60UL * 1000UL;  // 60 seconds
 
     // --- Light evaluation (CH1): digital on/off ---
     void evaluateLight(unsigned long now_ms)
     {
         const LightCfg& cfg = config.data.light;
-        // LDR must stay above/below threshold for this long before state changes
-        const unsigned long LDR_DEBOUNCE_MS = 5UL * 60UL * 1000UL;
 
-        // Twilight detection with hysteresis and 5-minute debounce
-        if (is_dark)
+        // Compensate for lamp self-illumination: when lamp is on, subtract offset
+        int compensated = (int)ldr_reading;
+        if (light_on)
+            compensated -= (int)cfg.twilight_lamp_offset;
+        if (compensated < 0) compensated = 0;
+
+        bool reading_dark = (compensated < (int)cfg.twilight_threshold);
+
+        if (reading_dark != is_dark)
         {
-            if (ldr_reading > cfg.twilight_off)
+            // Reading disagrees with current state — advance debounce timer
+            if (m_ldr_change_since_ms == 0)
+                m_ldr_change_since_ms = now_ms;
+            else if (now_ms - m_ldr_change_since_ms >= LDR_DEBOUNCE_MS)
             {
-                if (m_ldr_bright_since_ms == 0)
-                    m_ldr_bright_since_ms = now_ms;
-                else if (now_ms - m_ldr_bright_since_ms >= LDR_DEBOUNCE_MS)
-                {
-                    is_dark = false;
-                    m_ldr_bright_since_ms = 0;
-                    Log.info("[GH] LDR bright for 5 min, is_dark = false");
-                }
-            }
-            else
-            {
-                m_ldr_bright_since_ms = 0;  // Dropped back — reset timer
+                is_dark = reading_dark;
+                m_ldr_change_since_ms = 0;
+                Log.info("[GH] LDR %s (compensated %d, threshold %d)",
+                         is_dark ? "dark" : "bright", compensated, cfg.twilight_threshold);
             }
         }
         else
         {
-            if (ldr_reading < cfg.twilight_on)
-            {
-                if (m_ldr_dark_since_ms == 0)
-                    m_ldr_dark_since_ms = now_ms;
-                else if (now_ms - m_ldr_dark_since_ms >= LDR_DEBOUNCE_MS)
-                {
-                    is_dark = true;
-                    m_ldr_dark_since_ms = 0;
-                    Log.info("[GH] LDR dark for 5 min, is_dark = true");
-                }
-            }
-            else
-            {
-                m_ldr_dark_since_ms = 0;  // Recovered — reset timer
-            }
+            m_ldr_change_since_ms = 0;  // Reading agrees — reset timer
         }
 
         // Time schedule check

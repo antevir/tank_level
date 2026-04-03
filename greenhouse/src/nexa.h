@@ -23,6 +23,7 @@ class NexaController {
 public:
     bool plug_on[MAX_NEXA_PLUGS]        = {};   // Current commanded state
     bool plug_reachable[MAX_NEXA_PLUGS] = {};   // Last HTTP call succeeded
+    bool plug_override[MAX_NEXA_PLUGS]  = {};   // Manual override active (ignores schedule until next transition)
 
     void init()
     {
@@ -50,7 +51,8 @@ public:
         return count;
     }
 
-    // Manual on/off from dashboard — sends HTTP immediately.
+    // Manual on/off from dashboard — sends HTTP immediately and sets override.
+    // Override persists until the schedule's desired state next changes.
     bool forceToggle(const NexaCfg& cfg, int idx, bool on)
     {
         if (idx < 0 || idx >= cfg.num_plugs || idx >= MAX_NEXA_PLUGS)
@@ -58,18 +60,26 @@ public:
         const NexaPlugCfg& p = cfg.plugs[idx];
         if (p.hostname[0] == '\0') return false;
         plug_on[idx] = on;
+        plug_override[idx] = true;
         plug_reachable[idx] = sendState(cfg, idx, on);
-        Log.info("[NEXA] Manual toggle plug %d (%s) -> %s%s", idx, p.name,
+        Log.info("[NEXA] Manual toggle plug %d (%s) -> %s (override)%s", idx, p.name,
                  on ? "ON" : "OFF", plug_reachable[idx] ? "" : " (FAILED)");
         return plug_reachable[idx];
     }
 
     // Called from greenhouse update loop (~every 100 ms tick).
     // HTTP calls only happen on state changes or periodic retries.
-    void update(const NexaCfg& cfg, bool is_dark, bool time_synced)
+    void update(const NexaCfg& cfg, uint16_t ldr_reading, bool lamp_on,
+                uint16_t lamp_offset, bool time_synced)
     {
         unsigned long now_ms = millis();
         bool periodic = (now_ms - m_last_retry_ms >= RETRY_INTERVAL_MS);
+
+        // Compute Nexa darkness using its own threshold + lamp compensation
+        int compensated = (int)ldr_reading;
+        if (lamp_on) compensated -= (int)lamp_offset;
+        if (compensated < 0) compensated = 0;
+        bool nexa_is_dark = (compensated < (int)cfg.nexa_twilight_threshold);
 
         // Priority: handle state changes (one plug per tick to avoid blocking)
         for (int i = 0; i < MAX_NEXA_PLUGS; i++)
@@ -79,10 +89,27 @@ public:
             {
                 plug_on[i] = false;
                 plug_reachable[i] = false;
+                plug_override[i] = false;
                 continue;
             }
 
-            bool should_on = desiredState(p, is_dark, time_synced);
+            bool should_on = desiredState(p, nexa_is_dark, time_synced);
+
+            // Track schedule transitions to clear manual override
+            if (should_on != m_prev_desired[i])
+            {
+                m_prev_desired[i] = should_on;
+                if (plug_override[i])
+                {
+                    plug_override[i] = false;
+                    Log.info("[NEXA] Plug %d (%s) override cleared (schedule changed)", i, p.name);
+                }
+            }
+
+            // Skip schedule control while manual override is active
+            if (plug_override[i])
+                continue;
+
             if (should_on != plug_on[i])
             {
                 plug_on[i] = should_on;
@@ -116,6 +143,9 @@ private:
     int           m_rr_idx              = -1;
     unsigned long m_last_browse_ms      = 0;
 
+    // Track previous desired state per plug to detect schedule transitions
+    bool          m_prev_desired[MAX_NEXA_PLUGS] = {};
+
     // Cached resolved IPs (populated via mDNS browse, never expire by time)
     IPAddress     m_cached_ip[MAX_NEXA_PLUGS];
 
@@ -124,9 +154,11 @@ private:
     static constexpr int           NEXA_PORT             = 3000;
     static constexpr int           TIMEOUT_MS            = 1500;
 
-    bool desiredState(const NexaPlugCfg& p, bool is_dark, bool time_synced)
+    bool desiredState(const NexaPlugCfg& p, bool nexa_is_dark, bool time_synced)
     {
-        if (!is_dark || !time_synced) return false;
+        if (!time_synced) return false;
+        // If use_twilight is set, require darkness; otherwise schedule-only
+        if (p.use_twilight && !nexa_is_dark) return false;
         time_t now = time(nullptr);
         struct tm* tm_now = localtime(&now);
         for (int s = 0; s < p.num_time_spans && s < MAX_TIME_SPANS; s++)

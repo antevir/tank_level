@@ -7,7 +7,7 @@
 #include "irrigation.h"
 
 // Bump magic when struct layout changes so old EEPROM content is discarded.
-#define CONFIG_MAGIC      0x4E4C4309  // "NLC" + version 9 (Nexa mDNS discovery)
+#define CONFIG_MAGIC      0x4E4C430A  // "NLC" + version 10 (single twilight, Nexa override)
 #define MAX_TIME_SPANS    4
 #define MAX_NEXA_PLUGS    4
 #define NEXA_NAME_LEN     16
@@ -26,8 +26,8 @@ struct TimeSpanCfg {
 };
 
 struct LightCfg {
-    uint16_t twilight_on;   // ADC reading below this → dark (turn on)
-    uint16_t twilight_off;  // ADC reading above this → light (turn off)
+    uint16_t twilight_threshold;    // ADC below this = dark (single threshold for on/off)
+    uint16_t twilight_lamp_offset;  // ADC offset to subtract when lamp is on (compensate LDR self-illumination)
     uint8_t  num_time_spans;
     uint8_t  _pad;
     TimeSpanCfg time_spans[MAX_TIME_SPANS];
@@ -41,13 +41,15 @@ struct NexaPlugCfg {
     char     name[NEXA_NAME_LEN];           // Display name (null-terminated)
     uint8_t  enabled;
     uint8_t  num_time_spans;
-    uint8_t  _pad[2];
+    uint8_t  use_twilight;                  // 1 = require dark (LDR), 0 = schedule-only
+    uint8_t  _pad;
     TimeSpanCfg time_spans[MAX_TIME_SPANS]; // Per-plug time schedules
 };
 
 struct NexaCfg {
     uint8_t  num_plugs;                     // 0..MAX_NEXA_PLUGS
-    uint8_t  _pad[3];
+    uint8_t  _pad;
+    uint16_t nexa_twilight_threshold;       // Separate LDR threshold for indoor Nexa plugs (lower = darker)
     NexaPlugCfg plugs[MAX_NEXA_PLUGS];
 };
 
@@ -115,12 +117,12 @@ public:
         data.magic = CONFIG_MAGIC;
 
         // --- Light defaults ---
-        data.light.twilight_on   = 300;    // Below 300 = dark
-        data.light.twilight_off  = 400;    // Above 400 = light
+        data.light.twilight_threshold   = 600;    // Below 600 = dark
+        data.light.twilight_lamp_offset = 200;    // Lamp adds ~200 ADC to LDR
         data.light.num_time_spans = 1;
-        data.light.time_spans[0].start_hour   = 21;
+        data.light.time_spans[0].start_hour   = 16;
         data.light.time_spans[0].start_minute  = 0;
-        data.light.time_spans[0].end_hour      = 7;
+        data.light.time_spans[0].end_hour      = 22;
         data.light.time_spans[0].end_minute    = 0;
         data.light.time_spans[0].weekdays      = 0x7F; // All days
         data.light.time_spans[0].enabled       = 1;
@@ -140,5 +142,6 @@ public:
 
         // --- Nexa defaults (all empty/disabled) ---
         data.nexa.num_plugs = 0;
+        data.nexa.nexa_twilight_threshold = 700;  // Indoor: darker threshold than greenhouse
     }
 };

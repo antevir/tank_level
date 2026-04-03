@@ -5,7 +5,7 @@ A multi-component IoT system for water tank monitoring, pump control, greenhouse
 ## System overview
 
 ```
-┌─────────────────┐         TCP :15011          ┌──────────────────┐
+┌─────────────────┐         TCP :15011           ┌──────────────────┐
 │  remote_btn     │◄──────────────────────────►  │  tank            │
 │  ESP8266 D1 Mini│   PUMP_ENABLE/DISABLE        │  ESP8266 D1 Mini │
 │  Pump button    │   PUMP_STATE broadcasts      │  Water level     │

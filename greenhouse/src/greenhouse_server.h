@@ -145,8 +145,7 @@ if(nx.length==0){nb.innerHTML='<span style="color:#888">No plugs configured</spa
 else{var h='';for(var i=0;i<nx.length;i++){
 var cls=nx[i].ok?(nx[i].on?'ind ind-on':'ind ind-off'):'ind ind-err';
 var txt=nx[i].name+': '+(nx[i].ok?(nx[i].on?'ON':'OFF'):'Unreachable');
-h+='<div class="row"><span class="'+cls+'">'+txt+'</span>';
-if(nx[i].ok){h+='<button class="btn btn-sm '+(nx[i].on?'btn-del':'')+
+h+='<div class="row"><span class="'+cls+'">'+txt+'</span>';if(nx[i].ovr){h+='<span class=\"ind ind-warn\">Manual</span>';}if(nx[i].ok){h+='<button class="btn btn-sm '+(nx[i].on?'btn-del':'')+
 '" onclick="nexaToggle('+i+','+(nx[i].on?0:1)+')">'+(nx[i].on?'Turn OFF':'Turn ON')+'</button>';}
 h+='</div>';}
 nb.innerHTML=h;}
@@ -161,7 +160,7 @@ function fetchHist(){fetch('/api/history').then(function(r){return r.json();}).t
 
 function drawCharts(){
 drawChart('ldrChart',ldrH,curLdr,1023,'#16c79a',
-[{v:cfg.light?cfg.light.twi_on:300,c:'#ff6b6b',d:[5,3]},{v:cfg.light?cfg.light.twi_off:400,c:'#ff6b6b',d:[2,3]}]);
+[{v:cfg.light?cfg.light.twi_th:300,c:'#ff6b6b',d:[5,3]}]);
 var cW=100,cD=(cfg.irr&&cfg.irr.cal_dry!=null)?cfg.irr.cal_dry:775;
 var mP=moistH.map(function(v){return adcPct(v,cW,cD);});
 drawChart('moistChart',mP,curMPct,100,'#4fc3f7',
@@ -200,13 +199,14 @@ static const char GH_HTML_LIGHT[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 </style></head><body>
 <a href="/" class="btn btn-sm btn-sec" style="margin-bottom:8px">&#8592; Dashboard</a>
 <h1>&#x1F319; Night Light Settings</h1>
-<p style="color:#888;font-size:0.85em;margin:4px 0">LDR thresholds are shared with Nexa smart plugs.</p>
+<p style="color:#888;font-size:0.85em;margin:4px 0">Nexa plugs use a separate threshold set on the Nexa page.</p>
 
-<div class="card"><h2>Twilight Thresholds</h2>
+<div class="card"><h2>Twilight Threshold</h2>
 <div class="row">
-<label>Night (on below): <input type="number" min="0" max="1023" id="twi_on"></label>
-<label>Day (off above): <input type="number" min="0" max="1023" id="twi_off"></label>
+<label>Dark threshold (ADC): <input type="number" min="0" max="1023" id="twi_th"></label>
+<label>Lamp offset (ADC): <input type="number" min="0" max="500" id="twi_lamp"></label>
 </div>
+<p style="color:#888;font-size:0.8em;margin:4px 0">Lamp offset is subtracted from LDR when lamp is on to avoid self-illumination.</p>
 </div>
 
 <div class="card"><h2>Time Schedules</h2>
@@ -226,8 +226,8 @@ function init(){fetch('/api/config').then(function(r){return r.json();}).then(fu
 
 function render(){
 var l=cfg.light||{};
-document.getElementById('twi_on').value=l.twi_on||300;
-document.getElementById('twi_off').value=l.twi_off||400;
+document.getElementById('twi_th').value=l.twi_th||300;
+document.getElementById('twi_lamp').value=l.twi_lamp||200;
 renderTS(l.ts||[]);
 }
 
@@ -246,8 +246,8 @@ document.getElementById('tsC').innerHTML=h;
 
 function gather(){
 if(!cfg.light)cfg.light={};
-cfg.light.twi_on=parseInt(document.getElementById('twi_on').value)||0;
-cfg.light.twi_off=parseInt(document.getElementById('twi_off').value)||0;
+cfg.light.twi_th=parseInt(document.getElementById('twi_th').value)||0;
+cfg.light.twi_lamp=parseInt(document.getElementById('twi_lamp').value)||0;
 var ts=cfg.light.ts||[];
 for(var t=0;t<ts.length;t++){
 var sv=document.getElementById('s_'+t).value.split(':'),ev=document.getElementById('e_'+t).value.split(':');
@@ -263,7 +263,7 @@ function delTS(i){gather();cfg.light.ts.splice(i,1);renderTS(cfg.light.ts);}
 
 function save(){
 gather();
-var b='twi_on='+cfg.light.twi_on+'&twi_off='+cfg.light.twi_off;
+var b='twi_th='+cfg.light.twi_th+'&twi_lamp='+cfg.light.twi_lamp;
 var ts=cfg.light.ts||[];b+='&tsc='+ts.length;
 for(var t=0;t<ts.length;t++){
 b+='&t'+t+'_sh='+ts[t].sh+'&t'+t+'_sm='+ts[t].sm+'&t'+t+'_eh='+ts[t].eh+'&t'+t+'_em='+ts[t].em+'&t'+t+'_d='+ts[t].days+'&t'+t+'_en='+ts[t].en;}
@@ -363,7 +363,14 @@ static const char GH_HTML_NEXA[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 </style></head><body>
 <a href="/" class="btn btn-sm btn-sec" style="margin-bottom:8px">&#8592; Dashboard</a>
 <h1>&#x1F50C; Nexa Smart Plugs</h1>
-<p style="color:#888;font-size:0.85em;margin:4px 0">Up to 4 WiFi smart plugs (Nexa WPO-01). Controlled by the same LDR sensor &mdash; thresholds set in <a href="/light" style="color:#16c79a">Night Light Settings</a>.</p>
+<p style="color:#888;font-size:0.85em;margin:4px 0">Up to 4 WiFi smart plugs (Nexa WPO-01). Indoor plugs use a separate twilight threshold from the outdoor lamp.</p>
+
+<div class="card"><h2>Indoor Twilight Threshold</h2>
+<div class="row">
+<label>Nexa dark threshold (ADC): <input type="number" min="0" max="1023" id="nexa_twi_th"></label>
+</div>
+<p style="color:#888;font-size:0.8em;margin:4px 0">LDR threshold for indoor plugs. Lower = darker required. Set per-plug "Use twilight" to enable.</p>
+</div>
 
 <div class="card"><h2>Discover Devices</h2>
 <p style="color:#888;font-size:0.85em">Scan the local network for Nexa smart plugs via mDNS.</p>
@@ -386,6 +393,7 @@ function init(){fetch('/api/config').then(function(r){return r.json();}).then(fu
 
 function render(){
 var nx=cfg.nexa||{};var plugs=nx.plugs||[];var h='';
+document.getElementById('nexa_twi_th').value=nx.twi_th||200;
 for(var p=0;p<plugs.length;p++){
 var pl=plugs[p];
 h+='<div class="plug"><div class="row" style="justify-content:space-between"><h3>'+(pl.name||pl.host||('Plug '+(p+1)))+'</h3>';
@@ -394,6 +402,7 @@ h+='<div class="row">';
 h+='<span style="font-size:0.85em;color:#888">Host: '+(pl.host||'?')+'</span>';
 h+='<label>Name: <input type="text" maxlength="15" id="pn_'+p+'" value="'+(pl.name||'')+'"></label>';
 h+='<label><input type="checkbox" id="pen_'+p+'" '+(pl.en?'checked':'')+' > Enabled</label>';
+h+='<label><input type="checkbox" id="ptwi_'+p+'" '+(pl.twi?'checked':'')+' > Use twilight</label>';
 h+='</div>';
 h+='<h3 style="margin-top:6px">Schedules</h3><div id="pts_'+p+'">';
 var ts=pl.ts||[];
@@ -450,7 +459,7 @@ function addFromScan(host){
 gather();
 var plugs=(cfg.nexa&&cfg.nexa.plugs)||[];
 if(plugs.length>=4){alert('Max 4 plugs');return;}
-plugs.push({host:host,name:host,en:1,ts:[{sh:21,sm:0,eh:7,em:0,days:127,en:1}]});
+plugs.push({host:host,name:host,en:1,twi:1,ts:[{sh:21,sm:0,eh:7,em:0,days:127,en:1}]});
 if(!cfg.nexa)cfg.nexa={};
 cfg.nexa.plugs=plugs;cfg.nexa.n=plugs.length;
 render();renderFound();
@@ -458,10 +467,13 @@ render();renderFound();
 
 function gather(){
 var nx=cfg.nexa||{};var plugs=nx.plugs||[];
+if(!cfg.nexa)cfg.nexa={};
+cfg.nexa.twi_th=parseInt(document.getElementById('nexa_twi_th').value)||0;
 for(var p=0;p<plugs.length;p++){
 var el=document.getElementById('pn_'+p);if(!el)continue;
 plugs[p].name=document.getElementById('pn_'+p).value;
 plugs[p].en=document.getElementById('pen_'+p).checked?1:0;
+plugs[p].twi=document.getElementById('ptwi_'+p).checked?1:0;
 var ts=plugs[p].ts||[];
 for(var t=0;t<ts.length;t++){
 var sv=document.getElementById('ps_'+p+'_'+t).value.split(':'),ev=document.getElementById('pe_'+p+'_'+t).value.split(':');
@@ -482,11 +494,12 @@ function delTS(p,t){gather();cfg.nexa.plugs[p].ts.splice(t,1);render();}
 
 function save(){
 gather();var plugs=cfg.nexa?cfg.nexa.plugs:[];
-var b='n='+plugs.length;
+var b='twi_th='+(cfg.nexa?cfg.nexa.twi_th:200)+'&n='+plugs.length;
 for(var p=0;p<plugs.length;p++){
 var pp='p'+p;b+='&'+pp+'_host='+encodeURIComponent(plugs[p].host||'');
 b+='&'+pp+'_name='+encodeURIComponent(plugs[p].name||'');
 b+='&'+pp+'_en='+(plugs[p].en?1:0);
+b+='&'+pp+'_twi='+(plugs[p].twi?1:0);
 var ts=plugs[p].ts||[];b+='&'+pp+'_tsc='+ts.length;
 for(var t=0;t<ts.length;t++){
 b+='&'+pp+'_t'+t+'_sh='+ts[t].sh+'&'+pp+'_t'+t+'_sm='+ts[t].sm;
@@ -571,8 +584,8 @@ private:
             j += "\",\"on\":";
             j += m_gh->nexa.plug_on[i] ? "true" : "false";
             j += ",\"ok\":";
-            j += m_gh->nexa.plug_reachable[i] ? "true" : "false";
-            j += "}";
+            j += m_gh->nexa.plug_reachable[i] ? "true" : "false";            j += ",\"ovr\":";
+            j += m_gh->nexa.plug_override[i] ? "true" : "false";            j += "}";
         }
         j += "]}";
         m_server.send(200, "application/json", j);
@@ -586,8 +599,8 @@ private:
         const NexaCfg&       nx = m_gh->config.data.nexa;
 
         String j = "{\"light\":{";
-        j += "\"twi_on\":"   + String(l.twilight_on);
-        j += ",\"twi_off\":" + String(l.twilight_off);
+        j += "\"twi_th\":"    + String(l.twilight_threshold);
+        j += ",\"twi_lamp\":" + String(l.twilight_lamp_offset);
         j += ",\"ts\":[";
         for (int t = 0; t < l.num_time_spans && t < MAX_TIME_SPANS; t++)
         {
@@ -610,7 +623,9 @@ private:
         j += ",\"max_c\":"    + String(ir.max_cycles);
 
         // Nexa config
-        j += "},\"nexa\":{\"n\":" + String(nx.num_plugs) + ",\"plugs\":[";
+        j += "},\"nexa\":{\"n\":" + String(nx.num_plugs);
+        j += ",\"twi_th\":" + String(nx.nexa_twilight_threshold);
+        j += ",\"plugs\":[";
         for (int i = 0; i < nx.num_plugs && i < MAX_NEXA_PLUGS; i++)
         {
             if (i > 0) j += ",";
@@ -618,6 +633,7 @@ private:
             j += "{\"host\":\"" + String(p.hostname) + "\"";
             j += ",\"name\":\"" + String(p.name) + "\"";
             j += ",\"en\":" + String(p.enabled);
+            j += ",\"twi\":" + String(p.use_twilight);
             j += ",\"ts\":[";
             for (int t = 0; t < p.num_time_spans && t < MAX_TIME_SPANS; t++)
             {
@@ -641,12 +657,10 @@ private:
     {
         LightCfg& l = m_gh->config.data.light;
 
-        if (m_server.hasArg("twi_on"))
-            l.twilight_on  = constrain(m_server.arg("twi_on").toInt(),  0, 1023);
-        if (m_server.hasArg("twi_off"))
-            l.twilight_off = constrain(m_server.arg("twi_off").toInt(), 0, 1023);
-        if (l.twilight_off <= l.twilight_on)
-            l.twilight_off = l.twilight_on + 1;
+        if (m_server.hasArg("twi_th"))
+            l.twilight_threshold   = constrain(m_server.arg("twi_th").toInt(),    0, 1023);
+        if (m_server.hasArg("twi_lamp"))
+            l.twilight_lamp_offset = constrain(m_server.arg("twi_lamp").toInt(), 0, 1023);
 
         if (m_server.hasArg("tsc"))
         {
@@ -698,6 +712,9 @@ private:
     {
         NexaCfg& nx = m_gh->config.data.nexa;
 
+        if (m_server.hasArg("twi_th"))
+            nx.nexa_twilight_threshold = constrain(m_server.arg("twi_th").toInt(), 0, 1023);
+
         if (m_server.hasArg("n"))
         {
             int n = constrain(m_server.arg("n").toInt(), 0, MAX_NEXA_PLUGS);
@@ -722,6 +739,8 @@ private:
                 }
                 if (m_server.hasArg(pp + "_en"))
                     p.enabled = m_server.arg(pp + "_en").toInt() ? 1 : 0;
+                if (m_server.hasArg(pp + "_twi"))
+                    p.use_twilight = m_server.arg(pp + "_twi").toInt() ? 1 : 0;
 
                 if (m_server.hasArg(pp + "_tsc"))
                 {
