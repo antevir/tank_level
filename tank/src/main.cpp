@@ -83,7 +83,7 @@ void setup()
 #ifdef ESP32
   // ESP32-S2 Mini: ADC defaults to 13 bits, match ESP8266 10-bit range
   analogReadResolution(10);
-  analogSetPinAttenuation(CURRENT_ADC_PIN, ADC_11db);
+  analogSetAttenuation(ADC_0db);
 
   // Remap SPI to D5/D6/D7 board positions; pass -1 for CS so SPI doesn't
   // reassign the CS pin — we drive it manually via SDCARD_CS_PIN.
@@ -141,19 +141,12 @@ void setup()
 #endif
   Log.info("Free heap: %d", ESP.getFreeHeap());
 
-  Log.info("Setup 4: OTA");
   setupOta();
 
-  Log.info("Setup 5: NTP");
   timeClient.begin();
 
-  Log.info("Setup 6: tank_init");
   tank_init();
-
-  Log.info("Setup 7: pump_init");
   pump_init();
-
-  Log.info("Setup 8: server_init");
   server_init();
 
   Log.info("Setup complete, heap: %d", ESP.getFreeHeap());
@@ -161,26 +154,6 @@ void setup()
 
 void loop()
 {
-  static const char *step = "init";
-  static unsigned long last_alive = 0;
-  static bool first_heartbeat = true;
-
-  // Heartbeat every 2 s: shows last completed step and heap so we can pinpoint a crash.
-  if (millis() - last_alive >= 2000)
-  {
-    last_alive = millis();
-    if (first_heartbeat)
-    {
-      // Repeat reset reason here — startup packet is often dropped while WiFi connects.
-      Log.info("Reset reason: %s (heartbeat), heap: %d", g_reset_reason, ESP.getFreeHeap());
-      first_heartbeat = false;
-    }
-    else
-    {
-      Log.info("Loop alive, step: %s, heap: %d", step, ESP.getFreeHeap());
-    }
-  }
-
 #ifdef ESP32
   // Explicitly reset the Task WDT for the loop task.
   // delay() calls vTaskDelay() which yields to the scheduler but does NOT
@@ -189,19 +162,12 @@ void loop()
 #endif
 
 #ifdef ESP8266
-  step = "mDNS";
   MDNS.update();
 #endif
-  step = "OTA";
   ArduinoOTA.handle();
-  step = "NTP";
   handleNtp();
-  step = "tank";
   tank_handle();
-  step = "server";
   server_handle();
-  step = "pump";
   pump_handle();
-  step = "delay";
   delay(10); // Yield to RTOS
 }
