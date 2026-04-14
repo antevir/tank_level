@@ -1,10 +1,6 @@
 #include <Arduino.h>
 #include "common.h"
-#ifdef ESP32
 #include <WebServer.h>
-#else
-#include <ESP8266WebServer.h>
-#endif
 #include <SPI.h>
 #include <SD.h>
 #include <TimeLib.h>
@@ -15,11 +11,7 @@
 #include "pump.h"
 #include "tcp_server.h"
 
-#ifdef ESP32
 static WebServer server(80);
-#else
-static ESP8266WebServer server(80);
-#endif
 
 // ─── Embedded Dashboard HTML ───────────────────────────────────────────────
 static const char INDEX_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
@@ -58,7 +50,7 @@ canvas{width:100%;background:#0d1b2a;border-radius:4px;margin-top:8px}
 .tab-bar button{background:#1b2838;color:#888;border:none;padding:6px 14px;border-radius:4px 4px 0 0;cursor:pointer;font-weight:bold}
 .tab-bar button.active{background:#16c79a;color:#1a1a2e}
 </style></head><body>
-<h1>&#x1F4A7; Tank Dashboard</h1>
+<h1><h1>&#x1F4A7; Tank Dashboard <a href="/log" class="btn btn-sec" style="font-size:0.6em;vertical-align:middle">Log</a></h1></h1>
 
 <div class="card"><h2>System Status</h2>
 <div class="row">
@@ -78,6 +70,7 @@ canvas{width:100%;background:#0d1b2a;border-radius:4px;margin-top:8px}
 <tr><th>24h Consumption</th><td id="consumed">-</td></tr>
 <tr><th>Pump State</th><td id="pstate">-</td></tr>
 <tr><th>Pump Current</th><td id="pcurrent">-</td></tr>
+<tr><th>Air Temperature</th><td id="airtemp">-</td></tr>
 </table>
 <div class="row" style="margin-top:12px">
 <button class="btn" onclick="pumpCmd('enable')">Enable Pump</button>
@@ -111,6 +104,8 @@ document.getElementById('harvest').textContent=sign+d.TANK.HARV+' L';
 document.getElementById('consumed').textContent=d.TANK.CONS+' L';
 document.getElementById('pstate').textContent=d.PUMP.STATETEXT;
 document.getElementById('pcurrent').textContent=d.PUMP.CUR+' mA';
+var at=document.getElementById('airtemp');
+if(d.TANK.TEMP!==undefined)at.textContent=d.TANK.TEMP.toFixed(1)+' \u00b0C';
 var pi=document.getElementById('pumpInd');
 var ps=d.PUMP.STATE;
 var pL={'-2':'Pump: DryRun','-1':'Pump: Off','0':'Pump: Idle','1':'Pump: Running','2':'Pump: Warning'};
@@ -177,6 +172,45 @@ ctx.fillRect(x-bw/2,H-bh,bw,bh);}}
 
 window.addEventListener('resize',drawHist);
 fetchStats();setInterval(fetchStats,3000);loadHist('24h',document.querySelector('.tab-bar button'));
+</script></body></html>)rawliteral";
+
+static const char LOG_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Tank Log</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:monospace;max-width:960px;margin:0 auto;padding:10px;background:#1a1a2e;color:#e0e0e0;font-size:13px}
+h1{color:#16c79a;margin:10px 0;font-size:1.5em;font-family:Arial,sans-serif}
+.btn{background:#16c79a;color:#1a1a2e;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;margin:4px;font-weight:bold;text-decoration:none;display:inline-block;font-family:Arial,sans-serif;font-size:0.8em}
+.btn:hover{background:#1df0b0}
+.btn-sec{background:#555;color:#fff}
+.btn-sec:hover{background:#777}
+#log{background:#0d1b2a;border-radius:6px;padding:10px;margin:10px 0;white-space:pre-wrap;word-wrap:break-word;max-height:80vh;overflow-y:auto}
+.log-info{color:#4fc3f7}
+.log-warn{color:#e6a117}
+.log-err{color:#c73e1d}
+</style></head><body>
+<h1><a href="/" class="btn btn-sec" style="font-size:0.8em">&#8592; Dashboard</a> Tank Log</h1>
+<div><label><input type="checkbox" id="autoRefresh" checked> Auto-refresh (3s)</label>
+<button class="btn" onclick="fetchLog()">Refresh Now</button></div>
+<div id="log">Loading...</div>
+<script>
+function fetchLog(){
+fetch('/log.json').then(function(r){return r.json();}).then(function(lines){
+var el=document.getElementById('log');
+var html='';
+for(var i=0;i<lines.length;i++){
+var c='log-info';
+if(lines[i].indexOf('[Error]')>=0)c='log-err';
+else if(lines[i].indexOf('[Warning]')>=0)c='log-warn';
+html+='<div class="'+c+'">'+lines[i].replace(/</g,'&lt;')+'</div>';
+}
+el.innerHTML=html||'<em>No log entries</em>';
+el.scrollTop=el.scrollHeight;
+}).catch(function(){});}
+fetchLog();
+setInterval(function(){if(document.getElementById('autoRefresh').checked)fetchLog();},3000);
 </script></body></html>)rawliteral";
 
 // ─── SD card JSON helpers (unchanged) ──────────────────────────────────────
@@ -292,6 +326,28 @@ void server_init()
     server.on("/disable_pump", HTTP_POST, []() {
         pump_disable();
         server.send(200, "text/plain", "OK");
+    });
+
+    server.on("/log", HTTP_GET, []() {
+        server.send_P(200, PSTR("text/html"), LOG_HTML);
+    });
+
+    server.on("/log.json", HTTP_GET, []() {
+        String json = "[";
+        int n = Log.ringCount();
+        for (int i = 0; i < n; i++)
+        {
+            const char *entry = Log.ringEntry(i);
+            if (!entry) continue;
+            if (i > 0) json += ",";
+            // JSON-escape the string
+            String escaped = String(entry);
+            escaped.replace("\\", "\\\\");
+            escaped.replace("\"", "\\\"");
+            json += "\"" + escaped + "\"";
+        }
+        json += "]";
+        server.send(200, "application/json", json);
     });
 
     // SD card history files (last30days, monthly, yearly)

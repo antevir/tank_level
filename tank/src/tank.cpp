@@ -3,6 +3,12 @@
 #include <SD.h>
 #include <RingBufCPP.h>
 #include <TimeLib.h>
+#include <HardwareSerial.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <esp_task_wdt.h>
 #include "MedianFilterLib.h"
 #include "MeanFilterLib.h"
 
@@ -41,6 +47,56 @@ static int filter_entries = 0;
 // Health state
 static bool sd_ok = false;
 static bool sensor_ok = false;
+
+static HardwareSerial distSerial(1);
+static OneWire oneWire;
+static DallasTemperature tempSensors(&oneWire);
+static float g_temperatureC = 20.0f;  // default until first reading
+
+// Read one distance from A02YYUW using triggered (on-demand) mode.
+// Send 0x01 to request a single measurement; sensor replies with one
+// 4-byte packet: 0xFF distH distL checksum. This avoids continuous
+// streaming which fills the RX FIFO with stale data between readings.
+// Returns distance in mm, or -1 on timeout/checksum error.
+static int readUARTDistanceMM()
+{
+    // Discard any stale bytes accumulated since last reading
+    while (distSerial.available())
+        distSerial.read();
+
+    // Send trigger byte to request one measurement
+    distSerial.write((uint8_t)0x01);
+
+    // Wait for the 4-byte response: 0xFF distH distL checksum
+    // At 9600 baud, one byte ≈ 1 ms; sensor responds within ~100-300 ms.
+    const uint32_t TIMEOUT_MS = 400;
+    unsigned long start = millis();
+    int badChecksum = 0;
+
+    while (millis() - start < TIMEOUT_MS) {
+        if (!distSerial.available()) continue;
+        uint8_t b = distSerial.read();
+        if (b != 0xFF) continue;
+        uint8_t buf[3] = {0};
+        uint8_t idx = 0;
+        unsigned long t = millis();
+        while (idx < 3 && millis() - t < 50) {
+            if (distSerial.available())
+                buf[idx++] = distSerial.read();
+        }
+        if (idx < 3) continue;
+        uint8_t checksum = (uint8_t)(0xFF + buf[0] + buf[1]);
+        if (checksum != buf[2]) {
+            badChecksum++;
+            continue;
+        }
+        int dist = (int)((buf[0] << 8) | buf[1]);
+        Log.info("UART raw: %02X %02X %02X %02X -> %d mm", 0xFF, buf[0], buf[1], buf[2], dist);
+        return dist;
+    }
+    Log.warn("UART: no valid packet after trigger (badCS=%d)", badChecksum);
+    return -1;
+}
 
 static String sample_to_json(sample_t &sample)
 {
@@ -154,20 +210,19 @@ static bool take_sample()
 {
     MedianFilter<long> fastMedianFilter(FAST_MEDIAN_FILTER_LEN);
     int valid_samples = 0;
+
     for (int i = 0; i < FAST_MEDIAN_FILTER_LEN; i++)
     {
-        digitalWrite(DIST_TRIG_PIN, HIGH);
-        delayMicroseconds(10);
-        digitalWrite(DIST_TRIG_PIN, LOW);
-        long duration = pulseIn(DIST_ECHO_PIN, HIGH, 10000 /* 10 ms timeout */);
-        if (duration == 0)
+        int dist_mm = readUARTDistanceMM();
+        if (dist_mm <= 0)
         {
             Log.warn("Distance sensor timeout (sample %d/%d)", i + 1, FAST_MEDIAN_FILTER_LEN);
             break;
         }
-        fastMedianFilter.AddValue(duration);
+        fastMedianFilter.AddValue(dist_mm);
         valid_samples++;
     }
+
     if (valid_samples == 0)
     {
         // All readings failed — don't corrupt the mean filter with zeros
@@ -176,7 +231,13 @@ static bool take_sample()
         return filter_entries >= SLOW_MEAN_FILTER_LEN;
     }
     sensor_ok = true;
-    meanFilter.AddValue(fastMedianFilter.GetFiltered());
+
+    // A02YYUW reports mm assuming ~343 m/s (≈20 °C).  Compensate using measured
+    // air temperature: v_actual = 331.3 + 0.606 * T  (m/s)
+    float v_actual = 331.3f + 0.606f * g_temperatureC;
+    long compensated_mm = (long)(fastMedianFilter.GetFiltered() * v_actual / 343.0f);
+    meanFilter.AddValue(compensated_mm);
+
     if (filter_entries < SLOW_MEAN_FILTER_LEN)
     {
         filter_entries++;
@@ -190,18 +251,92 @@ static bool take_sample()
 
 void tank_init()
 {
-    digitalWrite(DIST_TRIG_PIN, LOW);
+    // A02YYUW UART — triggered mode: TX sends 0x01 to request each measurement.
+    Log.info("UART dist sensor init: RX=GPIO%d TX=GPIO%d baud=9600 (triggered mode)", DIST_UART_RX_PIN, DIST_UART_TX_PIN);
+    distSerial.begin(9600, SERIAL_8N1, DIST_UART_RX_PIN, DIST_UART_TX_PIN);
+
+    // DS18B20 temperature sensor
+    Log.info("1-Wire temp sensor init: GPIO%d", ONE_WIRE_PIN);
+
+    // Verify external pullup: configure as input (no internal pull), read the idle level.
+    // With a working external pullup, the idle state should be HIGH.
+    pinMode(ONE_WIRE_PIN, INPUT);
+    int idleLevel = digitalRead(ONE_WIRE_PIN);
+    Log.info("1-Wire bus idle level (INPUT, no pull): %s", idleLevel ? "HIGH (pullup ok)" : "LOW (no pullup or bus stuck!)");
+
+    // Try driving low briefly, release, read back — verifies the pin can go low and returns high
+    pinMode(ONE_WIRE_PIN, OUTPUT);
+    digitalWrite(ONE_WIRE_PIN, LOW);
+    delayMicroseconds(10);
+    pinMode(ONE_WIRE_PIN, INPUT);
+    delayMicroseconds(100); // give pullup time to charge
+    int afterRelease = digitalRead(ONE_WIRE_PIN);
+    Log.info("1-Wire bus after drive-low-release: %s", afterRelease ? "HIGH (ok)" : "LOW (stuck or no pullup)");
+
+    oneWire.begin(ONE_WIRE_PIN);
+    // Manual reset pulse — returns true if any device pulls the bus low (presence detect)
+    bool presence = oneWire.reset();
+    Log.info("1-Wire reset pulse: %s", presence ? "PRESENCE detected" : "NO presence (check wiring + 4.7k pullup)");
+    tempSensors.begin();
+    int devCount = tempSensors.getDeviceCount();
+    Log.info("1-Wire devices found: %d", devCount);
+    if (devCount == 0)
+    {
+        Log.error("No DS18B20 found on GPIO%d! Needs 4.7k pullup to 3.3V. Using default %.1f C", ONE_WIRE_PIN, g_temperatureC);
+    }
+    else
+    {
+        DeviceAddress addr;
+        if (tempSensors.getAddress(addr, 0))
+        {
+            Log.info("DS18B20 addr: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
+                     addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], addr[6], addr[7]);
+        }
+        tempSensors.setResolution(9); // 9-bit: ~94 ms conversion
+        tempSensors.requestTemperatures();
+        float t = tempSensors.getTempCByIndex(0);
+        Log.info("DS18B20 raw reading: %.1f C (DISCONNECTED=%.1f)", t, (float)DEVICE_DISCONNECTED_C);
+        if (t != DEVICE_DISCONNECTED_C)
+        {
+            g_temperatureC = t;
+            Log.info("Initial air temperature: %.1f C", g_temperatureC);
+        }
+        else
+        {
+            Log.error("DS18B20 returned DISCONNECTED. Using default %.1f C", g_temperatureC);
+        }
+    }
+
     last_hour = hour();
     last_min = minute();
 
-    // Take one sample to avoid div by zero in mean filter
+    // Try initial distance reading
+    Log.info("Taking initial distance sample...");
     take_sample();
+
+    if (sensor_ok)
+    {
+        Log.info("Initial distance: %ld mm", meanFilter.GetFiltered());
+    }
+    else
+    {
+        Log.error("Initial distance reading FAILED. Check UART wiring (RX/TX may be swapped).");
+        Log.info("Checking if any bytes on UART...");
+        delay(300); // Give sensor time to send a packet
+        int avail = distSerial.available();
+        Log.info("UART bytes available: %d", avail);
+        if (avail == 0)
+        {
+            Log.error("No UART data. Possible issues: wrong RX pin, sensor not powered, or TX/RX swapped.");
+        }
+    }
 }
 
 uint16_t tank_get_level()
 {
     if (filter_entries == 0) return 0;
-    long distance_mm = (meanFilter.GetFiltered() * 34) / 200; // org: (0.034 / 2)
+    // Filter stores mm directly (A02YYUW outputs mm, temp-compensated)
+    long distance_mm = meanFilter.GetFiltered();
     distance_mm -= TANK_TOP_DISTANCE_MM;
     if (distance_mm < 0)
         distance_mm = 0;
@@ -221,7 +356,10 @@ String tank_get_stats_json()
     int consumed = consumption_per_day.get_consumption(false);
     int harvest = diff + consumed;
 
-    return "{\"LVL\":" + String(level) + ",\"HARV\":" + String(harvest) + ",\"CONS\":" + String(consumed) + "}";
+    String json = "{\"LVL\":" + String(level) + ",\"HARV\":" + String(harvest) + ",\"CONS\":" + String(consumed);
+    json += ",\"TEMP\":" + String(g_temperatureC, 1);
+    json += "}";
+    return json;
 }
 
 String tank_get_last_24h_json()
@@ -271,6 +409,18 @@ void tank_handle()
         return;
     }
     last_min = MINUTE();
+
+    // Refresh air temperature before taking distance samples
+    tempSensors.requestTemperatures();
+    float t = tempSensors.getTempCByIndex(0);
+    if (t != DEVICE_DISCONNECTED_C)
+    {
+        g_temperatureC = t;
+    }
+    else
+    {
+        Log.warn("DS18B20 read failed (DISCONNECTED), using last known: %.1f C", g_temperatureC);
+    }
 
     bool filter_filled = take_sample();
     if (filling && filter_filled)
