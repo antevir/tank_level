@@ -16,6 +16,9 @@
 #define PRI_WARNING 12 // 8 + 4
 #define PRI_ERROR 11   // 8 + 3
 
+#define LOG_RING_SIZE 64
+#define LOG_ENTRY_LEN 128
+
 class LogImpl
 {
 public:
@@ -52,6 +55,17 @@ public:
         va_end(args);
     }
 
+    // Return number of stored log entries
+    int ringCount() const { return ring_count; }
+
+    // Get log entry by index (0 = oldest). Returns nullptr if out of range.
+    const char *ringEntry(int idx) const
+    {
+        if (idx < 0 || idx >= ring_count) return nullptr;
+        int pos = (ring_head - ring_count + idx + LOG_RING_SIZE) % LOG_RING_SIZE;
+        return ring[pos];
+    }
+
 protected:
     enum Prio
     {
@@ -62,10 +76,24 @@ protected:
 
     WiFiUDP udp;
 
+    // Ring buffer for web log page
+    char ring[LOG_RING_SIZE][LOG_ENTRY_LEN];
+    int ring_head = 0;
+    int ring_count = 0;
+
+    void ringAdd(Prio pri, const char *message)
+    {
+        snprintf(ring[ring_head], LOG_ENTRY_LEN, "[%s] %s", priToString(pri), message);
+        ring_head = (ring_head + 1) % LOG_RING_SIZE;
+        if (ring_count < LOG_RING_SIZE) ring_count++;
+    }
+
     void write(Prio pri, const char *fmt, va_list args)
     {
         char buffer[256];
         vsnprintf(buffer, sizeof(buffer), fmt, args);
+
+        ringAdd(pri, buffer);
 
 #ifdef LOG_USE_SYSLOG
         writeSysLog(pri, buffer);
