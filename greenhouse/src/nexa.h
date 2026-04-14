@@ -24,6 +24,7 @@ public:
     bool plug_on[MAX_NEXA_PLUGS]        = {};   // Current commanded state
     bool plug_reachable[MAX_NEXA_PLUGS] = {};   // Last HTTP call succeeded
     bool plug_override[MAX_NEXA_PLUGS]  = {};   // Manual override active (ignores schedule until next transition)
+    bool nexa_is_dark                   = false; // Debounced darkness state for nexa plugs
 
     void init()
     {
@@ -76,10 +77,32 @@ public:
         bool periodic = (now_ms - m_last_retry_ms >= RETRY_INTERVAL_MS);
 
         // Compute Nexa darkness using its own threshold + lamp compensation
+        // (Only the greenhouse lamp affects the LDR, not the nexa plugs themselves)
         int compensated = (int)ldr_reading;
         if (lamp_on) compensated -= (int)lamp_offset;
         if (compensated < 0) compensated = 0;
-        bool nexa_is_dark = (compensated < (int)cfg.nexa_twilight_threshold);
+        bool reading_dark = (compensated < (int)cfg.nexa_twilight_threshold);
+
+        // Debounce: LDR must stay on the other side of the threshold for 60 s
+        // before we commit the nexa darkness state change (prevents blinking
+        // when the reading is near the threshold).
+        if (reading_dark != nexa_is_dark)
+        {
+            if (m_nexa_dark_change_ms == 0)
+                m_nexa_dark_change_ms = now_ms;
+            else if (now_ms - m_nexa_dark_change_ms >= NEXA_LDR_DEBOUNCE_MS)
+            {
+                nexa_is_dark = reading_dark;
+                m_nexa_dark_change_ms = 0;
+                Log.info("[NEXA] LDR %s (compensated %d, threshold %d)",
+                         nexa_is_dark ? "dark" : "bright", compensated,
+                         cfg.nexa_twilight_threshold);
+            }
+        }
+        else
+        {
+            m_nexa_dark_change_ms = 0;  // Reading agrees — reset timer
+        }
 
         // Priority: handle state changes (one plug per tick to avoid blocking)
         for (int i = 0; i < MAX_NEXA_PLUGS; i++)
@@ -142,6 +165,7 @@ private:
     unsigned long m_last_retry_ms       = 0;
     int           m_rr_idx              = -1;
     unsigned long m_last_browse_ms      = 0;
+    unsigned long m_nexa_dark_change_ms = 0;   // Debounce timer for nexa darkness
 
     // Track previous desired state per plug to detect schedule transitions
     bool          m_prev_desired[MAX_NEXA_PLUGS] = {};
@@ -151,6 +175,7 @@ private:
 
     static constexpr unsigned long RETRY_INTERVAL_MS     = 30000;
     static constexpr unsigned long BROWSE_COOLDOWN_MS    = 30000;  // min interval between mDNS browses
+    static constexpr unsigned long NEXA_LDR_DEBOUNCE_MS  = 60UL * 1000UL;  // 60s debounce like greenhouse lamp
     static constexpr int           NEXA_PORT             = 3000;
     static constexpr int           TIMEOUT_MS            = 1500;
 

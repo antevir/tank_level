@@ -57,7 +57,7 @@ canvas{width:100%;background:#0d1b2a;border-radius:4px;margin-top:8px}
 #connBanner{display:none;background:#c73e1d;color:#fff;padding:12px 16px;border-radius:8px;margin:8px 0;font-weight:bold;font-size:1.05em;text-align:center}
 .hdr{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap}
 </style></head><body>
-<h1>&#127793; Greenhouse Controller</h1>
+<h1>&#127793; Greenhouse Controller <a href="/log" class="btn btn-sec" style="font-size:0.6em;vertical-align:middle">Log</a></h1>
 <div id="connBanner">&#9888; DISCONNECTED FROM PUMP SERVER</div>
 
 <div class="card"><h2>System Status</h2>
@@ -81,6 +81,11 @@ canvas{width:100%;background:#0d1b2a;border-radius:4px;margin-top:8px}
 </div>
 
 <div class="card">
+<div class="hdr"><h2>&#x1F50C; Nexa Smart Plugs</h2><a href="/nexa" class="btn btn-sm btn-sec">&#9881; Settings</a></div>
+<div id="nexaBox"><span style="color:#888">No plugs configured</span></div>
+</div>
+
+<div class="card">
 <div class="hdr"><h2>&#x1F4A7; Soil Moisture &amp; Irrigation</h2><a href="/irrigation" class="btn btn-sm btn-sec">&#9881; Settings</a></div>
 <div class="row">
 <span>Moisture: <span class="status-val" id="moistPct">-</span>% (<span id="moistV">-</span> V)</span>
@@ -92,11 +97,6 @@ canvas{width:100%;background:#0d1b2a;border-radius:4px;margin-top:8px}
 <div class="bar-bg"><div class="bar" id="moistBar" style="width:0%;background:linear-gradient(90deg,#0d47a1,#4fc3f7)"></div></div>
 <div class="legend"><span><i style="background:#4fc3f7"></i>Moisture</span><span><i style="background:#e6a117"></i>Dry</span><span><i style="background:#16c79a"></i>Wet</span></div>
 <canvas id="moistChart" height="150"></canvas>
-</div>
-
-<div class="card">
-<div class="hdr"><h2>&#x1F50C; Nexa Smart Plugs</h2><a href="/nexa" class="btn btn-sm btn-sec">&#9881; Settings</a></div>
-<div id="nexaBox"><span style="color:#888">No plugs configured</span></div>
 </div>
 
 <script>
@@ -514,6 +514,45 @@ setTimeout(function(){document.getElementById('msg').textContent='';},3000);
 init();
 </script></body></html>)rawliteral";
 
+// ─── Page 5: Log ───────────────────────────────────────────────────────────
+static const char GH_HTML_LOG[] PROGMEM = R"rawliteral(<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Greenhouse Log</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:monospace;max-width:960px;margin:0 auto;padding:10px;background:#1a1a2e;color:#e0e0e0;font-size:13px}
+h1{color:#16c79a;margin:10px 0;font-size:1.5em;font-family:Arial,sans-serif}
+.btn{background:#16c79a;color:#1a1a2e;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;margin:4px;font-weight:bold;text-decoration:none;display:inline-block;font-family:Arial,sans-serif;font-size:0.8em}
+.btn:hover{background:#1df0b0}
+.btn-sec{background:#555;color:#fff}
+.btn-sec:hover{background:#777}
+#log{background:#0d1b2a;border-radius:6px;padding:10px;margin:10px 0;white-space:pre-wrap;word-wrap:break-word;max-height:80vh;overflow-y:auto}
+.log-info{color:#4fc3f7}
+.log-warn{color:#e6a117}
+.log-err{color:#c73e1d}
+</style></head><body>
+<h1><a href="/" class="btn btn-sec" style="font-size:0.8em">&#8598; Dashboard</a> Greenhouse Log</h1>
+<div><label><input type="checkbox" id="autoRefresh" checked> Auto-refresh (3s)</label>
+<button class="btn" onclick="fetchLog()">Refresh Now</button></div>
+<div id="log">Loading...</div>
+<script>
+function fetchLog(){
+fetch('/log.json').then(function(r){return r.json();}).then(function(lines){
+var el=document.getElementById('log');
+var html='';
+for(var i=0;i<lines.length;i++){
+var c='log-info';
+if(lines[i].indexOf('[Error]')>=0)c='log-err';
+else if(lines[i].indexOf('[Warning]')>=0)c='log-warn';
+html+='<div class="'+c+'">'+lines[i].replace(/</g,'&lt;')+'</div>';}
+el.innerHTML=html||'<em>No log entries</em>';
+el.scrollTop=el.scrollHeight;
+}).catch(function(){});}
+fetchLog();
+setInterval(function(){if(document.getElementById('autoRefresh').checked)fetchLog();},3000);
+</script></body></html>)rawliteral";
+
 // ─── Server class ──────────────────────────────────────────────────────────
 
 class GreenhouseServer {
@@ -529,6 +568,8 @@ public:
         m_server.on("/light",      HTTP_GET,  [this]() { m_server.send_P(200, PSTR("text/html"), GH_HTML_LIGHT); });
         m_server.on("/irrigation", HTTP_GET,  [this]() { m_server.send_P(200, PSTR("text/html"), GH_HTML_IRR); });
         m_server.on("/nexa",       HTTP_GET,  [this]() { m_server.send_P(200, PSTR("text/html"), GH_HTML_NEXA); });
+        m_server.on("/log",        HTTP_GET,  [this]() { m_server.send_P(200, PSTR("text/html"), GH_HTML_LOG); });
+        m_server.on("/log.json",   HTTP_GET,  [this]() { handleLogJson(); });
 
         // API
         m_server.on("/api/status",        HTTP_GET,  [this]() { handleStatus(); });
@@ -802,6 +843,25 @@ private:
         m_gh->calibrateDry();
         String j = "{\"val\":" + String(m_gh->config.data.irrigation.moisture_cal_dry) + "}";
         m_server.send(200, "application/json", j);
+    }
+
+    // ── Log JSON ───────────────────────────────────────────────────────────
+    void handleLogJson()
+    {
+        String json = "[";
+        int n = Log.ringCount();
+        for (int i = 0; i < n; i++)
+        {
+            const char *entry = Log.ringEntry(i);
+            if (!entry) continue;
+            if (i > 0) json += ",";
+            String escaped = String(entry);
+            escaped.replace("\\", "\\\\");
+            escaped.replace("\"", "\\\"");
+            json += "\"" + escaped + "\"";
+        }
+        json += "]";
+        m_server.send(200, "application/json", json);
     }
 
     // ── History ────────────────────────────────────────────────────────────
