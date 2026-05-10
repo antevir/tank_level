@@ -164,6 +164,7 @@ static PumpState execute_state(PumpState state)
     return state;
 }
 
+#if 0 // Skip this since we got a water level sensor
 static void check_for_dryrun()
 {
     static int dryrun_counter = 0;
@@ -180,6 +181,7 @@ static void check_for_dryrun()
         }
     }
 }
+#endif
 
 static void check_button()
 {
@@ -292,7 +294,7 @@ void pump_handle()
     if (last_second != second())
     {
         last_second = second();
-        check_for_dryrun();
+        //check_for_dryrun();
         check_got_water();
         if (filter_filled)
         {
