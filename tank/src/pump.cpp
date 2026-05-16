@@ -24,7 +24,7 @@
 // However, voltage is inverted on A0 => ADC value: 1023-614 = 409 = 10A
 // => mA = (1023 - ADC value) * 10A * 1000 / 409
 // Please note that ADC value is inverted, i.e. 1023 = 0 mA
-#define ADC_TO_mA(x) ((1024 - (x)) * (10000.0f / 409.0f))
+#define ADC_TO_mA(x) ((1023 - (x)) * (10000.0f / 409.0f))
 
 const char *pump_topic = "pump_state";
 static int last_second = 0;
