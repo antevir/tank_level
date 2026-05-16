@@ -3,7 +3,7 @@
 #include "pump.h"
 #include "tank.h"
 
-#define CONSUMPTION_TMO_MIN 10
+#define CONSUMPTION_TMO_SEC 600
 
 class Consumption
 {
@@ -45,7 +45,7 @@ public:
             {
                 start_level = tank_get_level();
             }
-            timeout = CONSUMPTION_TMO_MIN;
+            timeout = CONSUMPTION_TMO_SEC;
         }
         else if (is_consuming())
         {

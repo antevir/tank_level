@@ -91,7 +91,7 @@ static int readUARTDistanceMM()
             continue;
         }
         int dist = (int)((buf[0] << 8) | buf[1]);
-        Log.info("UART raw: %02X %02X %02X %02X -> %d mm", 0xFF, buf[0], buf[1], buf[2], dist);
+        //Log.info("UART raw: %02X %02X %02X %02X -> %d mm", 0xFF, buf[0], buf[1], buf[2], dist);
         return dist;
     }
     Log.warn("UART: no valid packet after trigger (badCS=%d)", badChecksum);
@@ -403,6 +403,16 @@ bool tank_get_last_30days_file_and_offset(String &filename, int &data_offset)
 void tank_handle()
 {
     static bool filling = true;
+    static int last_second = -1;
+
+    // Tick consumption every second so short pump runs (< 1 min) are detected
+    int cur_second = second();
+    if (last_second != cur_second)
+    {
+        last_second = cur_second;
+        consumption_per_hour.tick();
+        consumption_per_day.tick();
+    }
 
     if (last_min == MINUTE())
     {
@@ -428,10 +438,6 @@ void tank_handle()
         filling = false;
         last_hour = HOUR();
     }
-
-    // Update consumption states each min
-    consumption_per_hour.tick();
-    consumption_per_day.tick();
 
     if (year() < 2000)
     {
