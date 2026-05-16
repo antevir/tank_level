@@ -102,7 +102,8 @@ public:
     IrrigationState irr_state() const { return m_irr.state; }
     uint8_t        irr_cycle_count() const { return m_irr.cycle_count; }
 
-    bool isTimeSynced() const { return g_gh_time_synced; }
+    bool isTimeSynced()  const { return g_gh_time_synced; }
+    bool isTankEmpty()   const { return m_tank_empty; }
 
     // Called from main.cpp when the LOCAL user presses the pump button.
     // pump_on: true = user wants pump ON, false = user wants pump OFF.
@@ -113,7 +114,15 @@ public:
             on_pump_request(pump_on);
 
         if (!pump_on)
+        {
+            // Mark as user-aborted so the active TP window does not immediately
+            // reopen the valve and restart the pump.
+            // The abort stays set until the TP window ends naturally (evaluateSchedule
+            // clears it when should_be_on goes false) — a second button press to
+            // restart the pump does NOT re-enable the current window.
+            m_user_aborted = true;
             pumpForcedOff(millis());
+        }
     }
 
     // Called from pump_state_cb whenever the tank server reports a new state.
@@ -121,7 +130,8 @@ public:
     // and external pump shutoff (timeout, dry-run, other user).
     void notifyPumpState(PumpState state)
     {
-        bool pump_on = (state >= PumpIdle);  // Idle, Running, Warning = pump enabled
+        m_tank_empty = (state == PumpDryRun);  // Block irrigation when tank is empty
+        bool pump_on = (state >= PumpIdle);    // Idle, Running, Warning = pump enabled
         if (pump_on && !m_irr_pump_on)
         {
             m_external_pump_on = true;
@@ -231,6 +241,8 @@ private:
     unsigned long  m_last_history_ms  = 0;
     bool           m_irr_pump_on      = false;  // Irrigation requested pump on
     bool           m_external_pump_on = false;  // Pump on due to user (local or remote button)
+    bool           m_tank_empty       = false;  // true when tank reports PumpDryRun
+    bool           m_user_aborted     = false;  // true when user stopped pump during active TP
 
     // LDR debounce: track when reading first crossed the threshold
     unsigned long  m_ldr_change_since_ms = 0;   // When LDR first crossed threshold
@@ -296,12 +308,31 @@ private:
     }
 
     // --- Irrigation evaluation (CH2) ---
-    // Delegates state machine to IrrigationCtrl, handles hardware side effects.
+    // Dispatches to the correct evaluation strategy based on irr_mode.
     void evaluateIrrigation(unsigned long now_ms)
     {
         bool prev_valve = m_irr.valve_on;
-        m_irr.evaluate(moisture_pct, moisture_sensor_ok,
-                        config.data.irrigation, now_ms);
+        const IrrigationCfg&     irrCfg = config.data.irrigation;
+        const IrrigationExtData& ext    = config.irr_ext;
+
+        if (ext.irr_mode == IRR_MODE_SCHEDULE)
+        {
+            // Time-program driven — use NTP time
+            struct tm* tm_now = nullptr;
+            if (g_gh_time_synced)
+            {
+                time_t t = time(nullptr);
+                tm_now = localtime(&t);
+            }
+            m_irr.evaluateSchedule(tm_now,
+                                   ext.time_progs, ext.num_time_progs,
+                                   irrCfg.enabled, m_tank_empty, m_user_aborted);
+        }
+        else
+        {
+            // Legacy moisture-sensor driven
+            m_irr.evaluate(moisture_pct, moisture_sensor_ok, irrCfg, now_ms);
+        }
 
         if (m_irr.valve_on != prev_valve)
         {

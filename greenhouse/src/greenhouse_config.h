@@ -12,7 +12,19 @@
 #define MAX_NEXA_PLUGS    4
 #define NEXA_NAME_LEN     16
 #define NEXA_HOST_LEN     32
-#define EEPROM_SIZE       512
+#define EEPROM_SIZE       1024  // 0-511: main config, 512-1023: extended blocks
+
+// Extended irrigation block — stored separately to preserve main config layout
+#define IRR_EXT_MAGIC   0x49520001  // "IR" v1 (schedule time programs)
+#define IRR_EXT_OFFSET  512
+
+struct IrrigationExtData {
+    uint32_t magic;
+    uint8_t  irr_mode;          // IRR_MODE_MOISTURE or IRR_MODE_SCHEDULE
+    uint8_t  num_time_progs;    // 0..MAX_IRR_TIME_PROGS
+    uint8_t  _pad[2];
+    IrrigationTimeProg time_progs[MAX_IRR_TIME_PROGS];
+};
 
 // --- Light channel (CH1) config ---
 struct TimeSpanCfg {
@@ -87,11 +99,13 @@ inline bool isTimeInSpan(const struct tm* tm_now, const TimeSpanCfg& ts)
 class GreenhouseConfig {
 public:
     GreenhouseCfgData data;
+    IrrigationExtData irr_ext;
 
     void begin()
     {
         EEPROM.begin(EEPROM_SIZE);
         load();
+        loadIrrExt();
     }
 
     void load()
@@ -108,6 +122,23 @@ public:
     {
         data.magic = CONFIG_MAGIC;
         EEPROM.put(0, data);
+        EEPROM.commit();
+    }
+
+    void loadIrrExt()
+    {
+        EEPROM.get(IRR_EXT_OFFSET, irr_ext);
+        if (irr_ext.magic != IRR_EXT_MAGIC)
+        {
+            setIrrExtDefaults();
+            saveIrrExt();
+        }
+    }
+
+    void saveIrrExt()
+    {
+        irr_ext.magic = IRR_EXT_MAGIC;
+        EEPROM.put(IRR_EXT_OFFSET, irr_ext);
         EEPROM.commit();
     }
 
@@ -143,5 +174,14 @@ public:
         // --- Nexa defaults (all empty/disabled) ---
         data.nexa.num_plugs = 0;
         data.nexa.nexa_twilight_threshold = 700;  // Indoor: darker threshold than greenhouse
+    }
+
+private:
+    void setIrrExtDefaults()
+    {
+        memset(&irr_ext, 0, sizeof(irr_ext));
+        irr_ext.magic          = IRR_EXT_MAGIC;
+        irr_ext.irr_mode       = IRR_MODE_SCHEDULE;
+        irr_ext.num_time_progs = 0;
     }
 };

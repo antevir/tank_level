@@ -86,36 +86,25 @@ canvas{width:100%;background:#0d1b2a;border-radius:4px;margin-top:8px}
 </div>
 
 <div class="card">
-<div class="hdr"><h2>&#x1F4A7; Soil Moisture &amp; Irrigation</h2><a href="/irrigation" class="btn btn-sm btn-sec">&#9881; Settings</a></div>
+<div class="hdr"><h2>&#x1F4A7; Irrigation</h2><a href="/irrigation" class="btn btn-sm btn-sec">&#9881; Settings</a></div>
 <div class="row">
-<span>Moisture: <span class="status-val" id="moistPct">-</span>% (<span id="moistV">-</span> V)</span>
-<span id="moistSensorInd" class="ind ind-off">Sensor: -</span>
+<span id="tankEmptyInd" class="ind ind-err" style="display:none">&#x26A0; Tank Empty!</span>
 <span id="valveInd" class="ind ind-off">Valve: OFF</span>
 <span id="irrInd" class="ind ind-off">State: Idle</span>
-<span id="cycleInd" style="font-size:0.8em;color:#888">Cycles: 0</span>
 </div>
-<div class="bar-bg"><div class="bar" id="moistBar" style="width:0%;background:linear-gradient(90deg,#0d47a1,#4fc3f7)"></div></div>
-<div class="legend"><span><i style="background:#4fc3f7"></i>Moisture</span><span><i style="background:#e6a117"></i>Dry</span><span><i style="background:#16c79a"></i>Wet</span></div>
-<canvas id="moistChart" height="150"></canvas>
+<div id="tpInfo" style="color:#888;font-size:0.85em;margin:4px 0">-</div>
 </div>
 
 <script>
-var cfg={},ldrH=[],moistH=[],curLdr=0,curMPct=0;
+var cfg={},ldrH=[],curLdr=0;
+function pad2(n){return n<10?'0'+n:''+n;}
 function init(){fetchCfg();fetchHist();fetchSt();setInterval(fetchSt,2000);setInterval(fetchHist,60000);}
-function adcPct(a,w,d){if(d<=w)return 50;var p=100-(a-w)*100/(d-w);return Math.max(0,Math.min(100,Math.round(p)));}
 
 function fetchSt(){
 fetch('/api/status').then(function(r){return r.json();}).then(function(d){
-curLdr=d.ldr;curMPct=d.moist_ok?d.moist_pct:0;
+curLdr=d.ldr;
 document.getElementById('ldr').textContent=d.ldr;
 document.getElementById('ldrBar').style.width=(d.ldr/1023*100)+'%';
-document.getElementById('moistV').textContent=(d.moist/1023*3.3).toFixed(2);
-var ms=document.getElementById('moistSensorInd');
-if(d.moist_ok){ms.className='ind ind-on';ms.textContent='Sensor: OK';
-document.getElementById('moistPct').textContent=d.moist_pct;
-document.getElementById('moistBar').style.width=d.moist_pct+'%';
-}else{ms.className='ind ind-err';ms.textContent='Sensor: DISCONNECTED';
-document.getElementById('moistPct').textContent='--';document.getElementById('moistBar').style.width='0%';}
 document.getElementById('ntp').textContent='NTP: '+(d.ntp?'synced':'waiting...');
 var banner=document.getElementById('connBanner'),ci=document.getElementById('connInd');
 if(d.conn){banner.style.display='none';ci.className='ind ind-on';ci.textContent='Server: Connected';}
@@ -124,15 +113,15 @@ var le=document.getElementById('lightInd');
 if(d.light){le.className='ind ind-on';le.textContent='Lamp: ON';}else{le.className='ind ind-off';le.textContent='Lamp: OFF';}
 var de=document.getElementById('darkInd');
 if(d.dark){de.className='ind ind-on';de.textContent='Dark: Yes';}else{de.className='ind ind-off';de.textContent='Dark: No';}
+var te=document.getElementById('tankEmptyInd');
+if(d.tank_empty){te.style.display='';te.className='ind ind-err';te.textContent='\u26A0 Tank Empty!';}
+else{te.style.display='none';}
 var ve=document.getElementById('valveInd');
-if(!d.moist_ok){ve.className='ind ind-err';ve.textContent='Valve: Fault';}
-else if(d.valve){ve.className='ind ind-on';ve.textContent='Valve: ON';}
+if(d.valve){ve.className='ind ind-on';ve.textContent='Valve: ON';}
 else{ve.className='ind ind-off';ve.textContent='Valve: OFF';}
 var ie=document.getElementById('irrInd');
-if(!d.moist_ok){ie.className='ind ind-err';ie.textContent='State: No Sensor';}
-else{var iS=['Idle','Watering','Soaking','Paused'],iC=['ind ind-off','ind ind-on','ind ind-warn','ind ind-err'];
-ie.className=iC[d.irr_st]||'ind ind-off';ie.textContent='State: '+(iS[d.irr_st]||'?');}
-document.getElementById('cycleInd').textContent='Cycles: '+(d.irr_cc||0);
+var iS=['Idle','Watering','Soaking','Paused'],iC=['ind ind-off','ind ind-on','ind ind-warn','ind ind-err'];
+ie.className=iC[d.irr_st]||'ind ind-off';ie.textContent='State: '+(iS[d.irr_st]||'?');
 var be=document.getElementById('btnInd');
 if(d.btn){be.className='ind ind-on';be.textContent='Button: PRESSED';}else{be.className='ind ind-off';be.textContent='Button: -';}
 var pe=document.getElementById('pumpInd');
@@ -155,17 +144,18 @@ document.getElementById('connInd').className='ind ind-err';document.getElementBy
 function nexaToggle(idx,on){fetch('/api/nexa/toggle',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'idx='+idx+'&on='+on})
 .then(function(){setTimeout(fetchSt,500);}).catch(function(){});}
 
-function fetchCfg(){fetch('/api/config').then(function(r){return r.json();}).then(function(d){cfg=d;}).catch(function(){});}
-function fetchHist(){fetch('/api/history').then(function(r){return r.json();}).then(function(d){ldrH=d.ldr||[];moistH=d.moist||[];drawCharts();}).catch(function(){});}
+function fetchCfg(){fetch('/api/config').then(function(r){return r.json();}).then(function(d){cfg=d;renderTpInfo();}).catch(function(){});}
+function renderTpInfo(){
+var tps=(cfg.irr&&cfg.irr.tps)||[];
+var en=tps.filter(function(t){return !!t.en;});
+if(en.length==0){document.getElementById('tpInfo').textContent='No time programs configured.';return;}
+var s='Programs: ';for(var i=0;i<en.length;i++){if(i>0)s+=', ';s+=pad2(en[i].sh)+':'+pad2(en[i].sm)+' ('+en[i].dur+' min)';}
+document.getElementById('tpInfo').textContent=s;}
+function fetchHist(){fetch('/api/history').then(function(r){return r.json();}).then(function(d){ldrH=d.ldr||[];drawCharts();}).catch(function(){});}
 
 function drawCharts(){
 drawChart('ldrChart',ldrH,curLdr,1023,'#16c79a',
-[{v:cfg.light?cfg.light.twi_th:300,c:'#ff6b6b',d:[5,3]}]);
-var cW=100,cD=(cfg.irr&&cfg.irr.cal_dry!=null)?cfg.irr.cal_dry:775;
-var mP=moistH.map(function(v){return adcPct(v,cW,cD);});
-drawChart('moistChart',mP,curMPct,100,'#4fc3f7',
-[{v:(cfg.irr&&cfg.irr.dry_pct!=null)?cfg.irr.dry_pct:30,c:'#e6a117',d:[5,3]},
- {v:(cfg.irr&&cfg.irr.wet_pct!=null)?cfg.irr.wet_pct:60,c:'#16c79a',d:[2,3]}]);}
+[{v:cfg.light?cfg.light.twi_th:300,c:'#ff6b6b',d:[5,3]}]);}
 
 function drawChart(id,hist,cur,yMax,lc,th){
 var c=document.getElementById(id);if(!c)return;var ctx=c.getContext('2d');
@@ -283,20 +273,44 @@ static const char GH_HTML_IRR[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <title>Irrigation Settings</title>
 <style>
 )rawliteral" GH_CSS R"rawliteral(
+details.card>summary{list-style:none;cursor:pointer;color:#aaa;font-size:0.9em;padding:2px 0;user-select:none}
+details.card>summary::-webkit-details-marker{display:none}
 </style></head><body>
 <a href="/" class="btn btn-sm btn-sec" style="margin-bottom:8px">&#8592; Dashboard</a>
 <h1>&#x1F4A7; Irrigation Settings</h1>
 
-<div class="card"><h2>Dry Calibration</h2>
+<div class="card"><h2>General</h2>
+<div class="row"><label><input type="checkbox" id="irrEn"> Irrigation Enabled</label></div>
+</div>
+
+<div class="card"><h2>Time Programs</h2>
+<p style="color:#888;font-size:0.85em;margin:4px 0 8px">Up to 4 programs. Each runs every day at the set start time for the given duration.</p>
+<div id="tpCont"></div>
+<button class="btn btn-sm" onclick="addTP()">+ Add Program</button>
+</div>
+
+<div style="margin:15px 0">
+<button class="btn" onclick="save()">&#x1F4BE; Save</button>
+<span id="msg" style="color:#16c79a;margin-left:10px"></span>
+</div>
+
+<details class="card">
+<summary>&#9660; Advanced: Moisture Sensor (hidden &mdash; preserved for future use)</summary>
+<div style="margin-top:10px">
+<h3 style="margin-bottom:8px">Mode</h3>
+<div class="row">
+<label><input type="radio" name="irrMode" id="modeSchedule" value="1"> &#128197; Time Programs (default)</label>
+<label><input type="radio" name="irrMode" id="modeMoisture" value="0"> &#128167; Moisture Sensor</label>
+</div>
+<p style="color:#888;font-size:0.8em;margin:4px 0">Switch to moisture sensor mode to use the analog soil sensor instead of time programs.</p>
+<h3 style="margin:10px 0 6px">Dry Calibration</h3>
 <div class="row">
 <span style="font-size:0.85em">Wet (100%): fixed at ADC &le; 100</span>
 <span style="font-size:0.85em">Dry (0%): <span class="status-val" id="calDry">-</span> ADC</span>
 <button class="btn btn-sm btn-warn" onclick="calibrate()">&#x1F3DC; Calibrate Dry (in air)</button>
 <span id="calMsg" style="color:#16c79a;font-size:0.85em"></span>
-</div></div>
-
-<div class="card"><h2>Parameters</h2>
-<div class="row"><label><input type="checkbox" id="irrEn"> Irrigation Enabled</label></div>
+</div>
+<h3 style="margin:10px 0 6px">Parameters</h3>
 <div class="row">
 <label>Dry threshold: <input type="number" min="0" max="100" id="dryTh">%</label>
 <label>Wet threshold: <input type="number" min="0" max="100" id="wetTh">%</label>
@@ -305,20 +319,22 @@ static const char GH_HTML_IRR[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <label>Water ON: <input type="number" min="1" max="180" id="irrOn"> min</label>
 <label>Soak OFF: <input type="number" min="1" max="480" id="irrOff"> min</label>
 <label>Max cycles: <input type="number" min="1" max="50" id="maxCyc"></label>
-</div></div>
-
-<div style="margin:15px 0">
-<button class="btn" onclick="save()">&#x1F4BE; Save</button>
-<span id="msg" style="color:#16c79a;margin-left:10px"></span>
 </div>
+</div>
+</details>
 
 <script>
 var cfg={};
+function pad(n){return n<10?'0'+n:''+n;}
 function init(){fetch('/api/config').then(function(r){return r.json();}).then(function(d){cfg=d;render();}).catch(function(){});}
 
 function render(){
 var ir=cfg.irr||{};
 document.getElementById('irrEn').checked=!!ir.en;
+var mode=ir.irr_mode!=null?ir.irr_mode:1;
+document.getElementById('modeSchedule').checked=(mode==1);
+document.getElementById('modeMoisture').checked=(mode==0);
+renderTPs(ir.tps||[]);
 document.getElementById('dryTh').value=ir.dry_pct!=null?ir.dry_pct:30;
 document.getElementById('wetTh').value=ir.wet_pct!=null?ir.wet_pct:60;
 document.getElementById('irrOn').value=ir.on_m||3;
@@ -327,20 +343,51 @@ document.getElementById('maxCyc').value=ir.max_c||6;
 document.getElementById('calDry').textContent=ir.cal_dry||775;
 }
 
+function renderTPs(tps){
+if(!cfg.irr)cfg.irr={};cfg.irr.tps=tps;
+var h='';for(var i=0;i<tps.length;i++){var tp=tps[i];
+h+='<div class="ts"><span style="font-weight:bold;min-width:80px">Program '+(i+1)+'</span>';
+h+=' Start: <input type="time" value="'+pad(tp.sh)+':'+pad(tp.sm)+'" id="tp_s_'+i+'" style="margin:0 4px">';
+h+=' Duration: <input type="number" min="1" max="720" style="width:65px;margin:0 4px" value="'+(tp.dur||10)+'" id="tp_d_'+i+'"> min';
+h+=' <label><input type="checkbox" '+(tp.en?'checked':'')+' id="tp_en_'+i+'"> Enabled</label>';
+h+=' <button class="btn btn-sm btn-del" onclick="delTP('+i+')">X</button></div>';}
+document.getElementById('tpCont').innerHTML=h;}
+
+function addTP(){
+gather();var tps=(cfg.irr&&cfg.irr.tps)||[];
+if(tps.length>=4){alert('Max 4 programs');return;}
+tps.push({sh:8,sm:0,dur:10,en:1});renderTPs(tps);}
+
+function delTP(i){gather();cfg.irr.tps.splice(i,1);renderTPs(cfg.irr.tps);}
+
+function gather(){
+if(!cfg.irr)cfg.irr={};var tps=cfg.irr.tps||[];
+for(var i=0;i<tps.length;i++){var el=document.getElementById('tp_s_'+i);if(!el)continue;
+var sv=el.value.split(':');tps[i].sh=parseInt(sv[0])||0;tps[i].sm=parseInt(sv[1])||0;
+tps[i].dur=parseInt(document.getElementById('tp_d_'+i).value)||1;
+tps[i].en=document.getElementById('tp_en_'+i).checked?1:0;}
+cfg.irr.irr_mode=document.getElementById('modeSchedule').checked?1:0;}
+
 function calibrate(){
 fetch('/api/calibrate_dry',{method:'POST'}).then(function(r){return r.json();}).then(function(d){
 document.getElementById('calDry').textContent=d.val;
-document.getElementById('calMsg').textContent='Calibrated dry: '+d.val+' ADC';
+document.getElementById('calMsg').textContent='Calibrated: '+d.val+' ADC';
 setTimeout(function(){document.getElementById('calMsg').textContent='';},4000);
 }).catch(function(){});}
 
 function save(){
+gather();var ir=cfg.irr||{};var tps=ir.tps||[];
 var b='irr_en='+(document.getElementById('irrEn').checked?1:0);
+b+='&irr_mode='+(ir.irr_mode!=null?ir.irr_mode:1);
 b+='&irr_dry_pct='+(parseInt(document.getElementById('dryTh').value)||0);
 b+='&irr_wet_pct='+(parseInt(document.getElementById('wetTh').value)||0);
 b+='&irr_on_m='+(parseInt(document.getElementById('irrOn').value)||0);
 b+='&irr_off_m='+(parseInt(document.getElementById('irrOff').value)||0);
 b+='&irr_max='+(parseInt(document.getElementById('maxCyc').value)||0);
+b+='&irr_tpc='+tps.length;
+for(var i=0;i<tps.length;i++){
+b+='&irr_tp'+i+'_sh='+tps[i].sh+'&irr_tp'+i+'_sm='+tps[i].sm;
+b+='&irr_tp'+i+'_dur='+tps[i].dur+'&irr_tp'+i+'_en='+tps[i].en;}
 fetch('/api/irrigation',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b})
 .then(function(r){return r.json();}).then(function(d){
 document.getElementById('msg').textContent=d.ok?'Saved!':'Error';
@@ -611,6 +658,8 @@ private:
         j += ",\"valve\":"     + String(m_gh->valve_on()  ? "true" : "false");
         j += ",\"irr_st\":"    + String((int)m_gh->irr_state());
         j += ",\"irr_cc\":"    + String(m_gh->irr_cycle_count());
+        j += ",\"irr_mode\":"  + String((int)m_gh->config.irr_ext.irr_mode);
+        j += ",\"tank_empty\":" + String(m_gh->isTankEmpty() ? "true" : "false");
         j += ",\"btn\":"       + String(g_button_pressed ? "true" : "false");
         j += ",\"conn\":"      + String(g_tank_connected  ? "true" : "false");
         j += ",\"pump\":"      + String((int)g_pump_state);
@@ -635,9 +684,10 @@ private:
     // ── Full config (light + irrigation + nexa) ────────────────────────────
     void handleGetConfig()
     {
-        const LightCfg&      l  = m_gh->config.data.light;
-        const IrrigationCfg& ir = m_gh->config.data.irrigation;
-        const NexaCfg&       nx = m_gh->config.data.nexa;
+        const LightCfg&           l   = m_gh->config.data.light;
+        const IrrigationCfg&      ir  = m_gh->config.data.irrigation;
+        const IrrigationExtData&  ext = m_gh->config.irr_ext;
+        const NexaCfg&            nx  = m_gh->config.data.nexa;
 
         String j = "{\"light\":{";
         j += "\"twi_th\":"    + String(l.twilight_threshold);
@@ -656,12 +706,25 @@ private:
         }
         j += "]},\"irr\":{";
         j += "\"en\":"        + String(ir.enabled);
+        j += ",\"irr_mode\":" + String(ext.irr_mode);
         j += ",\"cal_dry\":"  + String(ir.moisture_cal_dry);
         j += ",\"dry_pct\":"  + String(ir.dry_threshold_pct);
         j += ",\"wet_pct\":"  + String(ir.wet_threshold_pct);
         j += ",\"on_m\":"     + String(ir.irrigate_on_min);
         j += ",\"off_m\":"    + String(ir.irrigate_off_min);
         j += ",\"max_c\":"    + String(ir.max_cycles);
+        j += ",\"num_tp\":"   + String(ext.num_time_progs);
+        j += ",\"tps\":[";
+        for (int i = 0; i < ext.num_time_progs && i < MAX_IRR_TIME_PROGS; i++)
+        {
+            if (i > 0) j += ",";
+            const IrrigationTimeProg& tp = ext.time_progs[i];
+            j += "{\"sh\":"   + String(tp.start_hour);
+            j += ",\"sm\":"   + String(tp.start_minute);
+            j += ",\"dur\":"  + String(tp.duration_min);
+            j += ",\"en\":"   + String(tp.enabled) + "}";
+        }
+        j += "]";
 
         // Nexa config
         j += "},\"nexa\":{\"n\":" + String(nx.num_plugs);
@@ -728,8 +791,10 @@ private:
     // ── Save irrigation config ─────────────────────────────────────────────
     void handlePostIrrigation()
     {
-        IrrigationCfg& ir = m_gh->config.data.irrigation;
+        IrrigationCfg&     ir  = m_gh->config.data.irrigation;
+        IrrigationExtData& ext = m_gh->config.irr_ext;
 
+        // Moisture-sensor params (main config block)
         if (m_server.hasArg("irr_en"))
             ir.enabled = m_server.arg("irr_en").toInt() ? 1 : 0;
         if (m_server.hasArg("irr_dry_pct"))
@@ -742,8 +807,28 @@ private:
             ir.irrigate_off_min = constrain(m_server.arg("irr_off_m").toInt(), 1, 480);
         if (m_server.hasArg("irr_max"))
             ir.max_cycles = constrain(m_server.arg("irr_max").toInt(), 1, 50);
-
         m_gh->config.save();
+
+        // Extended irrigation params (separate EEPROM block \u2014 preserves Nexa config)
+        if (m_server.hasArg("irr_mode"))
+            ext.irr_mode = constrain(m_server.arg("irr_mode").toInt(), 0, 1);
+
+        if (m_server.hasArg("irr_tpc"))
+        {
+            int n = constrain(m_server.arg("irr_tpc").toInt(), 0, MAX_IRR_TIME_PROGS);
+            ext.num_time_progs = n;
+            for (int i = 0; i < n; i++)
+            {
+                String tp = "irr_tp" + String(i);
+                IrrigationTimeProg& prog = ext.time_progs[i];
+                if (m_server.hasArg(tp + "_sh"))  prog.start_hour   = constrain(m_server.arg(tp + "_sh").toInt(),  0, 23);
+                if (m_server.hasArg(tp + "_sm"))  prog.start_minute = constrain(m_server.arg(tp + "_sm").toInt(),  0, 59);
+                if (m_server.hasArg(tp + "_dur")) prog.duration_min = constrain(m_server.arg(tp + "_dur").toInt(), 1, 720);
+                if (m_server.hasArg(tp + "_en"))  prog.enabled      = m_server.arg(tp + "_en").toInt() ? 1 : 0;
+            }
+        }
+        m_gh->config.saveIrrExt();
+
         Log.info("[GH-SRV] Irrigation config saved");
         m_server.send(200, "application/json", "{\"ok\":true}");
     }
