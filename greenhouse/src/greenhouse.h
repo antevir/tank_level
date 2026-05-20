@@ -9,7 +9,9 @@
 #endif
 
 #include "greenhouse_config.h"
+#include "ldr_hyst.h"
 #include "nexa.h"
+
 #include "pump_state.h"
 #include "Log.h"
 
@@ -57,6 +59,8 @@
 
 // Stockholm timezone
 #define GH_TIME_ZONE "CET-1CEST,M3.5.0,M10.5.0/3"
+
+#define LDR_LAMP_HYSTERESIS  200   // ADC hysteresis band for greenhouse lamp
 
 // --- NTP sync callback ---
 static volatile bool g_gh_time_synced = false;
@@ -244,14 +248,11 @@ private:
     bool           m_tank_empty       = false;  // true when tank reports PumpDryRun
     bool           m_user_aborted     = false;  // true when user stopped pump during active TP
 
-    // LDR debounce: track when reading first crossed the threshold
-    unsigned long  m_ldr_change_since_ms = 0;   // When LDR first crossed threshold
-
-    // Debounce: LDR must stay on the other side of the threshold for this long
-    static constexpr unsigned long LDR_DEBOUNCE_MS = 60UL * 1000UL;  // 60 seconds
+    // LDR hysteresis state machine for lamp dark/bright detection
+    LdrHyst        m_ldr_hyst;
 
     // --- Light evaluation (CH1): digital on/off ---
-    void evaluateLight(unsigned long now_ms)
+    void evaluateLight(unsigned long /*now_ms*/)
     {
         const LightCfg& cfg = config.data.light;
 
@@ -261,24 +262,11 @@ private:
             compensated -= (int)cfg.twilight_lamp_offset;
         if (compensated < 0) compensated = 0;
 
-        bool reading_dark = (compensated < (int)cfg.twilight_threshold);
-
-        if (reading_dark != is_dark)
+        if (m_ldr_hyst.update(compensated, cfg.twilight_threshold, LDR_LAMP_HYSTERESIS))
         {
-            // Reading disagrees with current state — advance debounce timer
-            if (m_ldr_change_since_ms == 0)
-                m_ldr_change_since_ms = now_ms;
-            else if (now_ms - m_ldr_change_since_ms >= LDR_DEBOUNCE_MS)
-            {
-                is_dark = reading_dark;
-                m_ldr_change_since_ms = 0;
-                Log.info("[GH] LDR %s (compensated %d, threshold %d)",
-                         is_dark ? "dark" : "bright", compensated, cfg.twilight_threshold);
-            }
-        }
-        else
-        {
-            m_ldr_change_since_ms = 0;  // Reading agrees — reset timer
+            is_dark = m_ldr_hyst.is_dark;
+            Log.info("[GH] LDR %s (compensated %d, threshold %d)",
+                     is_dark ? "dark" : "bright", compensated, cfg.twilight_threshold);
         }
 
         // Time schedule check
