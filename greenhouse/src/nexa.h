@@ -132,7 +132,9 @@ public:
             }
         }
 
-        // Periodic: verify/retry one plug (round-robin)
+        // Periodic: retry one unreachable plug (round-robin).
+        // Only plugs where the last HTTP call failed are retried — reachable plugs
+        // are left alone so that physical button changes are not overridden.
         if (!periodic) return;
         m_last_retry_ms = now_ms;
 
@@ -140,7 +142,8 @@ public:
         {
             int i = (m_rr_idx + 1 + j) % MAX_NEXA_PLUGS;
             const NexaPlugCfg& p = cfg.plugs[i];
-            if (i < cfg.num_plugs && p.enabled && p.hostname[0] != '\0')
+            if (i < cfg.num_plugs && p.enabled && p.hostname[0] != '\0'
+                && !plug_reachable[i])
             {
                 plug_reachable[i] = sendState(cfg, i, plug_on[i]);
                 m_rr_idx = i;
