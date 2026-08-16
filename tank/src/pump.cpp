@@ -226,6 +226,13 @@ static void check_got_water()
     {
         pump_state = enter_state(PumpDryRun);
     }
+    else if (got_water && (pump_state == PumpDryRun))
+    {
+        // Water returned (e.g. rain refill). Leave DryRun so clients clear
+        // empty-tank LEDs / irrigation lockout. Stay Off — do not auto-start
+        // the pump; greenhouse can request PUMP_ENABLE if it needs water.
+        pump_state = enter_state(PumpOff);
+    }
 }
 
 static void tcp_command_callback(const String &cmd)
